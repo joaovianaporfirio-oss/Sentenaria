@@ -6,7 +6,7 @@ import {
   isCenterRegion,
   ROW_LABELS,
 } from '../core/constants';
-import { isValidMove } from '../core/gameEngine';
+import { hasRedMadeFirstMove, isValidMove } from '../core/gameEngine';
 import {
   CellState,
   CustomizationSettings,
@@ -55,6 +55,8 @@ export const BoardView: React.FC<BoardViewProps> = ({
   const recentTrincaIds = new Set(
     lastMove?.trincasFormed.map((t) => t.id) ?? []
   );
+  const redFirstMoveCenterRestricted =
+    currentPlayer === 'red' && !hasRedMadeFirstMove(board);
 
   const handleCellPress = (cell: CellState) => {
     if (disabled) return;
@@ -161,7 +163,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
       ? 'cursor-default'
       : isValid
       ? 'cursor-pointer hover:-translate-y-[1px] active:translate-y-[1px]'
-      : cell.owner === null && currentPlayer === 'red' && inCenter
+      : cell.owner === null && redFirstMoveCenterRestricted && inCenter
       ? 'cursor-not-allowed'
       : 'cursor-default';
 
@@ -223,14 +225,16 @@ export const BoardView: React.FC<BoardViewProps> = ({
               top: 'calc(33.333% + 2px)',
               width: 'calc(33.333% - 4px)',
               height: 'calc(33.333% - 4px)',
-              border:
-                currentPlayer === 'red'
-                  ? `2px dashed ${redColor}66`
-                  : `2px dashed ${blueColor}88`,
-              boxShadow:
-                currentPlayer === 'blue'
-                  ? `inset 0 0 18px ${blueColor}18`
-                  : `inset 0 0 14px ${redColor}12`,
+              border: redFirstMoveCenterRestricted
+                ? `2px dashed ${redColor}88`
+                : `2px dashed ${
+                    currentPlayer === 'red' ? redColor : blueColor
+                  }66`,
+              boxShadow: redFirstMoveCenterRestricted
+                ? `inset 0 0 14px ${redColor}18`
+                : `inset 0 0 16px ${
+                    currentPlayer === 'red' ? redColor : blueColor
+                  }14`,
             }}
           />
 
@@ -244,7 +248,9 @@ export const BoardView: React.FC<BoardViewProps> = ({
               const isHovered = hoveredIndex === cell.index;
               const isLastPlaced = lastMove?.index === cell.index;
               const isRedBlockedCenter =
-                cell.owner === null && inCenter && currentPlayer === 'red';
+                cell.owner === null &&
+                inCenter &&
+                redFirstMoveCenterRestricted;
 
               const pieceColor =
                 cell.owner === 'red'
@@ -306,11 +312,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
                     cell.owner === null &&
                     isValid &&
                     !isHovered &&
-                    inCenter &&
-                    currentPlayer === 'blue' && (
+                    inCenter && (
                       <span
                         className="w-1.5 h-1.5 rounded-full opacity-35 pointer-events-none"
-                        style={{ backgroundColor: blueColor }}
+                        style={{
+                          backgroundColor:
+                            currentPlayer === 'red' ? redColor : blueColor,
+                        }}
                       />
                     )}
 
@@ -407,12 +415,18 @@ export const BoardView: React.FC<BoardViewProps> = ({
           />
           <span>
             Centro 3×3:{' '}
-            {currentPlayer === 'red' ? (
+            {redFirstMoveCenterRestricted ? (
               <strong style={{ color: redColor }}>
-                Bloqueado p/ Vermelho
+                Bloqueado na 1ª jogada do Vermelho
               </strong>
             ) : (
-              <strong style={{ color: blueColor }}>Liberado p/ Azul</strong>
+              <strong
+                style={{
+                  color: currentPlayer === 'red' ? redColor : blueColor,
+                }}
+              >
+                Liberado p/ {currentPlayer === 'red' ? 'Vermelho' : 'Azul'}
+              </strong>
             )}
           </span>
         </div>

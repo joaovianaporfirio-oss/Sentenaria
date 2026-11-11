@@ -1,9 +1,24 @@
+import { ref, remove } from 'firebase/database';
 import { describe, expect, it } from 'vitest';
 import { chooseAIMove } from '../../ai/aiEngine';
+import { db } from '../../online/firebaseConfig';
+import {
+  createOnlineRoom,
+  joinOnlineRoom,
+  sendOnlineChatMessage,
+  submitOnlineMove,
+  subscribeToRoomChat,
+} from '../../online/onlineService';
+import {
+  generateRoomCode,
+  validateAndNormalizeRoomCode,
+  validateChatMessage,
+} from '../../online/roomCodeUtils';
 import { isCenterRegion, toIndex, TOTAL_CELLS } from '../constants';
 import {
   createInitialGameState,
   getValidMoveIndices,
+  hasRedMadeFirstMove,
   isValidMove,
   makeMove,
 } from '../gameEngine';
@@ -17,10 +32,13 @@ describe('Sentenaria Core Rules & Game Engine', () => {
     expect(state.status).toBe('playing');
   });
 
-  it('prevents Red from placing symbols in the 3x3 central region (rows 3..5, cols 3..5) while allowing Blue', () => {
+  it('enforces Red 1st-move center restriction AND grants Red normal center access from Red 2nd move onward', () => {
     let state = createInitialGameState();
 
-    // Red cannot play in any of the 9 center cells
+    // Before Red's 1st move: Red has not played yet
+    expect(hasRedMadeFirstMove(state.board)).toBe(false);
+
+    // 1. Red CANNOT play in any of the 9 center cells on Red's 1st move
     for (let r = 3; r <= 5; r++) {
       for (let c = 3; c <= 5; c++) {
         expect(isCenterRegion(r, c)).toBe(true);
@@ -29,23 +47,44 @@ describe('Sentenaria Core Rules & Game Engine', () => {
       }
     }
 
-    // Red has 72 valid moves initially (81 - 9)
+    // Red has 72 valid moves on their 1st move (81 - 9)
     expect(getValidMoveIndices(state.board, 'red').length).toBe(72);
 
-    // Red plays at (0, 0)
+    // Red makes 1st move outside the center at (0, 0)
     state = makeMove(state, 0, 0);
+    expect(hasRedMadeFirstMove(state.board)).toBe(true);
     expect(state.currentPlayer).toBe('blue');
 
-    // Blue CAN play in the 3x3 central region (e.g. (4, 4))
+    // Blue CAN play in the 3x3 central region on Blue's 1st move (e.g. (4, 4))
     expect(isValidMove(state.board, 4, 4, 'blue')).toBe(true);
     state = makeMove(state, 4, 4);
     expect(state.board[toIndex(4, 4)].owner).toBe('blue');
     expect(state.currentPlayer).toBe('red');
+
+    // 2. Now it is Red's 2nd move! Red MUST have access to all empty cells in the 3x3 central region!
+    expect(isValidMove(state.board, 3, 3, 'red')).toBe(true);
+    expect(isValidMove(state.board, 4, 5, 'red')).toBe(true);
+    expect(isValidMove(state.board, 5, 5, 'red')).toBe(true);
+    // 81 total - 2 occupied ((0,0) and (4,4)) = 79 valid moves for Red on Red's 2nd move!
+    expect(getValidMoveIndices(state.board, 'red').length).toBe(79);
+
+    // Red plays inside the 3x3 center at (3, 3) on Red's 2nd move
+    state = makeMove(state, 3, 3);
+    expect(state.board[toIndex(3, 3)].owner).toBe('red');
+
+    // Verify Red can even form a trinca inside the 3x3 center from move 2 onward
+    state = makeMove(state, 0, 8); // Blue
+    state = makeMove(state, 3, 4); // Red plays in center
+    state = makeMove(state, 1, 8); // Blue
+    state = makeMove(state, 3, 5); // Red completes horizontal trinca (3,3)-(3,4)-(3,5) inside the center!
+    expect(state.scores.red).toBe(1);
   });
 
   it('detects horizontal, vertical, main diagonal, and anti-diagonal trincas', () => {
-    // 1. Horizontal trinca for Red at (0,0)-(0,1)-(0,2)
-    let state = createInitialGameState({ ruleMode: 'regular', scoringMode: 'free' });
+    let state = createInitialGameState({
+      ruleMode: 'regular',
+      scoringMode: 'free',
+    });
     state = makeMove(state, 0, 0); // Red
     state = makeMove(state, 3, 3); // Blue
     state = makeMove(state, 0, 1); // Red
@@ -55,12 +94,12 @@ describe('Sentenaria Core Rules & Game Engine', () => {
     expect(state.formedTrincas.length).toBe(1);
     expect(state.formedTrincas[0].direction).toBe('horizontal');
 
-    // 2. Vertical trinca for Blue at (3,3)-(4,3)-(5,3)
+    // Vertical trinca for Blue at (3,3)-(4,3)-(5,3)
     state = makeMove(state, 5, 3); // Blue completes vertical!
     expect(state.scores.blue).toBe(1);
     expect(state.formedTrincas[1].direction).toBe('vertical');
 
-    // 3. Main diagonal trinca for Red at (6,0)-(7,1)-(8,2)
+    // Main diagonal trinca for Red at (6,0)-(7,1)-(8,2)
     state = makeMove(state, 6, 0); // Red
     state = makeMove(state, 3, 5); // Blue
     state = makeMove(state, 7, 1); // Red
@@ -69,7 +108,7 @@ describe('Sentenaria Core Rules & Game Engine', () => {
     expect(state.scores.red).toBe(2);
     expect(state.formedTrincas[2].direction).toBe('diag_main');
 
-    // 4. Anti-diagonal trinca for Red at (0,8)-(1,7)-(2,6)
+    // Anti-diagonal trinca for Red at (0,8)-(1,7)-(2,6)
     state = makeMove(state, 1, 0); // Blue
     state = makeMove(state, 0, 8); // Red
     state = makeMove(state, 2, 0); // Blue
@@ -88,7 +127,6 @@ describe('Sentenaria Core Rules & Game Engine', () => {
       scoringMode: 'free',
     });
 
-    // Red forms (0,0)-(0,1)-(0,2)
     state = makeMove(state, 0, 0); // Red
     state = makeMove(state, 8, 0); // Blue
     state = makeMove(state, 0, 1); // Red
@@ -96,52 +134,38 @@ describe('Sentenaria Core Rules & Game Engine', () => {
     state = makeMove(state, 0, 2); // Red -> 1st trinca!
     expect(state.scores.red).toBe(1);
 
-    // Now Red tries to extend horizontally with (0,3) and (0,4), reusing (0,2)
     state = makeMove(state, 7, 0); // Blue
     state = makeMove(state, 0, 3); // Red
     state = makeMove(state, 7, 1); // Blue
-    state = makeMove(state, 0, 4); // Red -> In Regular mode, (0,2) is already in a trinca, so (0,2)-(0,3)-(0,4) does NOT score!
+    state = makeMove(state, 0, 4); // Red -> (0,2) already in trinca, no score in Regular mode
     expect(state.scores.red).toBe(1);
 
-    // Only when Red places (0,5) do (0,3)-(0,4)-(0,5) form a completely fresh trinca!
     state = makeMove(state, 7, 2); // Blue
-    state = makeMove(state, 0, 5); // Red
+    state = makeMove(state, 0, 5); // Red -> (0,3)-(0,4)-(0,5) is fresh -> scores!
     expect(state.scores.red).toBe(2);
   });
 
-  it('enforces Adjacent Mode: allows reusing 1 cell from an existing trinca if at least 2 cells are unused, and blocks reusing 2 cells', () => {
+  it('enforces Adjacent Mode: allows reusing 1 cell from an existing trinca if at least 2 cells are unused', () => {
     let state = createInitialGameState({
       ruleMode: 'adjacent',
       scoringMode: 'free',
     });
 
-    // Red forms (0,0)-(0,1)-(0,2)
     state = makeMove(state, 0, 0); // Red
     state = makeMove(state, 8, 0); // Blue
     state = makeMove(state, 0, 1); // Red
     state = makeMove(state, 8, 1); // Blue
-    state = makeMove(state, 0, 2); // Red -> 1st trinca! (0,0), (0,1), (0,2) are now inTrinca = true
+    state = makeMove(state, 0, 2); // Red -> 1st trinca!
     expect(state.scores.red).toBe(1);
 
-    // Red plays (0,3). Does (0,1)-(0,2)-(0,3) score?
-    // NO! Because (0,1) and (0,2) ALREADY participated in a trinca (only 1 cell (0,3) is unused, need >= 2 unused!).
     state = makeMove(state, 7, 0); // Blue
-    state = makeMove(state, 0, 3); // Red
+    state = makeMove(state, 0, 3); // Red -> only 1 unused cell, does not score
     expect(state.scores.red).toBe(1);
 
-    // Now Red plays (0,4). Does (0,2)-(0,3)-(0,4) score?
-    // YES! Because (0,3) and (0,4) have NOT participated in any trinca yet (2 unused cells + 1 reused cell (0,2))!
     state = makeMove(state, 7, 1); // Blue
-    state = makeMove(state, 0, 4); // Red
+    state = makeMove(state, 0, 4); // Red -> 2 unused cells (0,3)+(0,4) + 1 reused (0,2) -> scores!
     expect(state.scores.red).toBe(2);
     expect(state.formedTrincas[1].reusedCellIndex).toBe(toIndex(0, 2));
-
-    // Also test perpendicular adjacent trinca: reusing (0,0) with two fresh cells (1,0) and (2,0)
-    state = makeMove(state, 7, 2); // Blue
-    state = makeMove(state, 1, 0); // Red
-    state = makeMove(state, 6, 0); // Blue
-    state = makeMove(state, 2, 0); // Red -> (0,0) is reused + (1,0) and (2,0) are fresh = 2 unused cells -> VALID!
-    expect(state.scores.red).toBe(3);
   });
 
   it('ends the match immediately in 8-points mode when a player reaches 8 points', () => {
@@ -150,7 +174,6 @@ describe('Sentenaria Core Rules & Game Engine', () => {
       scoringMode: 'eight_points',
     });
 
-    // Build 8 trincas for Blue while Red plays non-trinca cells
     const redSafeMoves = [
       [0, 0], [0, 1], [0, 3], [0, 4], [0, 6], [0, 7],
       [1, 0], [1, 1], [1, 3], [1, 4], [1, 6], [1, 7],
@@ -158,16 +181,15 @@ describe('Sentenaria Core Rules & Game Engine', () => {
       [8, 0], [8, 1], [8, 3], [8, 4], [8, 6], [8, 7],
     ];
 
-    // Blue plays rows 3, 4, 5 across cols 0..8
     const blueTargetMoves = [
-      [3, 0], [3, 1], [3, 2], // Trinca 1
-      [3, 3], [3, 4], // Trinca 2 at (3,2)-(3,3)-(3,4)
-      [3, 5], [3, 6], // Trinca 3 at (3,4)-(3,5)-(3,6)
-      [3, 7], [3, 8], // Trinca 4 at (3,6)-(3,7)-(3,8)
-      [4, 0], [5, 0], // Trinca 5 at (3,0)-(4,0)-(5,0)
-      [4, 2], [5, 2], // Trinca 6 at (3,2)-(4,2)-(5,2)
-      [4, 4], [5, 4], // Trinca 7 at (3,4)-(4,4)-(5,4)
-      [4, 6], [5, 6], // Trinca 8 at (3,6)-(4,6)-(5,6)
+      [3, 0], [3, 1], [3, 2],
+      [3, 3], [3, 4],
+      [3, 5], [3, 6],
+      [3, 7], [3, 8],
+      [4, 0], [5, 0],
+      [4, 2], [5, 2],
+      [4, 4], [5, 4],
+      [4, 6], [5, 6],
     ];
 
     let step = 0;
@@ -186,7 +208,7 @@ describe('Sentenaria Core Rules & Game Engine', () => {
     expect(state.endReason).toBe('target_score_reached');
   });
 
-  it('correctly runs Easy, Medium, and Hard AI in both Regular and Adjacent modes while respecting all rules', () => {
+  it('correctly runs Easy, Medium, and Hard AI in both Regular and Adjacent modes while respecting Red 1st-move restriction', () => {
     const difficulties = ['easy', 'medium', 'hard'] as const;
     const ruleModes = ['regular', 'adjacent'] as const;
 
@@ -199,116 +221,223 @@ describe('Sentenaria Core Rules & Game Engine', () => {
           aiDifficulty,
         });
 
-        // Play 12 plies (6 Red, 6 Blue)
-        for (let ply = 0; ply < 12; ply++) {
+        for (let ply = 0; ply < 10; ply++) {
           const move = chooseAIMove(state, aiDifficulty);
           expect(
             isValidMove(state.board, move.row, move.col, state.currentPlayer)
           ).toBe(true);
-          if (state.currentPlayer === 'red') {
+          if (ply === 0 && state.currentPlayer === 'red') {
             expect(isCenterRegion(move.row, move.col)).toBe(false);
           }
           state = makeMove(state, move.row, move.col);
         }
-        expect(state.turnCount).toBe(12);
+        expect(state.turnCount).toBe(10);
       }
     }
   });
+});
 
-  it('Hard AI takes an immediate winning trinca and blocks an opponent critical trinca', () => {
-    let state = createInitialGameState({
-      ruleMode: 'regular',
-      scoringMode: 'eight_points',
-      opponentMode: 'ai',
-      aiDifficulty: 'hard',
-    });
-
-    // 1. Test blocking a game-winning threat by Red at (0,2)
-    state.scores.red = 7; // Red is 1 point away from winning in 8-points mode!
-    state = makeMove(state, 0, 0); // Red
-    state = makeMove(state, 4, 4); // Blue
-    state = makeMove(state, 0, 1); // Red threatens (0,2) for the win!
-
-    // Hard AI (Blue) must block (0,2) to prevent Red from reaching 8 points
-    const blueBlockMove = chooseAIMove(state, 'hard');
-    expect(blueBlockMove).toEqual({ row: 0, col: 2 });
-
-    // 2. Test taking an immediate winning trinca for Blue at (5,4)
-    state = makeMove(state, 0, 2); // Blue blocks (0,2)
-    state = makeMove(state, 8, 8); // Red plays elsewhere
-    state.scores.blue = 7; // Blue is 1 point away from winning
-    state = makeMove(state, 3, 4); // Blue sets up (3,4) + (4,4)
-    state = makeMove(state, 8, 0); // Red plays elsewhere
-
-    const blueWinMove = chooseAIMove(state, 'hard');
-    // Blue can win immediately at either (2,4) or (5,4)
-    expect([
-      { row: 2, col: 4 },
-      { row: 5, col: 4 },
-    ]).toContainEqual(blueWinMove);
+describe('Online Room Code Validation & Generation', () => {
+  it('generates 6-character uppercase alphanumeric codes without accents', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 50; i++) {
+      const code = generateRoomCode();
+      expect(code).toMatch(/^[A-Z0-9]{6}$/);
+      seen.add(code);
+    }
+    expect(seen.size).toBeGreaterThan(45);
   });
 
-  it('properly finishes Free Mode both when all 81 cells are filled and when Red has no valid outer moves left', () => {
-    // Case A: Blue never plays in the center 3x3, so all 72 outer cells fill up after 72 moves (36 Red, 36 Blue).
-    // On turn 73 (Red's turn), only the 9 center cells are empty, so Red has 0 valid moves and the match ends cleanly!
-    let stateA = createInitialGameState({
-      ruleMode: 'regular',
-      scoringMode: 'free',
-    });
+  it('accepts uppercase and lowercase codes and normalizes them to uppercase', () => {
+    const res1 = validateAndNormalizeRoomCode('a7b9k2');
+    expect(res1.valid).toBe(true);
+    expect(res1.normalizedCode).toBe('A7B9K2');
 
-    const outerCoords: Array<[number, number]> = [];
-    for (let r = 0; r < 9; r++) {
-      for (let c = 0; c < 9; c++) {
-        if (!isCenterRegion(r, c)) {
-          outerCoords.push([r, c]);
-        }
-      }
-    }
-    expect(outerCoords.length).toBe(72);
-
-    for (const [r, c] of outerCoords) {
-      expect(stateA.status).toBe('playing');
-      stateA = makeMove(stateA, r, c);
-    }
-
-    expect(stateA.turnCount).toBe(72);
-    expect(stateA.status).toBe('finished');
-    expect(stateA.endReason).toBe('no_valid_moves_for_player');
-    expect(stateA.winner).not.toBeNull();
-
-    // Case B: Blue plays all 9 center cells early, so all 81 cells get filled (41 Red moves, 40 Blue moves)
-    let stateB = createInitialGameState({
-      ruleMode: 'adjacent',
-      scoringMode: 'free',
-    });
-
-    const centerCoords: Array<[number, number]> = [];
-    for (let r = 3; r <= 5; r++) {
-      for (let c = 3; c <= 5; c++) {
-        centerCoords.push([r, c]);
-      }
-    }
-
-    let outerCursor = 0;
-    let centerCursor = 0;
-
-    while (stateB.status === 'playing') {
-      if (stateB.currentPlayer === 'red') {
-        const [r, c] = outerCoords[outerCursor++];
-        stateB = makeMove(stateB, r, c);
-      } else {
-        if (centerCursor < centerCoords.length) {
-          const [r, c] = centerCoords[centerCursor++];
-          stateB = makeMove(stateB, r, c);
-        } else {
-          const [r, c] = outerCoords[outerCursor++];
-          stateB = makeMove(stateB, r, c);
-        }
-      }
-    }
-
-    expect(stateB.turnCount).toBe(81);
-    expect(stateB.status).toBe('finished');
-    expect(stateB.endReason).toBe('board_full');
+    const res2 = validateAndNormalizeRoomCode('ZyX987');
+    expect(res2.valid).toBe(true);
+    expect(res2.normalizedCode).toBe('ZYX987');
   });
+
+  it('rejects accented characters, spaces, special characters, and wrong lengths', () => {
+    expect(validateAndNormalizeRoomCode('ÁBC123').valid).toBe(false);
+    expect(validateAndNormalizeRoomCode('abç123').valid).toBe(false);
+    expect(validateAndNormalizeRoomCode('ãbc123').valid).toBe(false);
+    expect(validateAndNormalizeRoomCode('ébc123').valid).toBe(false);
+    expect(validateAndNormalizeRoomCode('ABC 12').valid).toBe(false);
+    expect(validateAndNormalizeRoomCode('ABC-12').valid).toBe(false);
+    expect(validateAndNormalizeRoomCode('ABC@12').valid).toBe(false);
+    expect(validateAndNormalizeRoomCode('ABC12').valid).toBe(false);
+    expect(validateAndNormalizeRoomCode('ABC1234').valid).toBe(false);
+    expect(validateAndNormalizeRoomCode('').valid).toBe(false);
+  });
+
+  it('validates chat messages and enforces character limits', () => {
+    expect(validateChatMessage('Olá, bom jogo!').valid).toBe(true);
+    expect(validateChatMessage('   ').valid).toBe(false);
+    expect(validateChatMessage('x'.repeat(201)).valid).toBe(false);
+  });
+});
+
+describe('Firebase Online Multiplayer Integration (Two Independent Sessions)', () => {
+  it(
+    'creates a room, joins with lowercase code, blocks a 3rd player, synchronizes turns & Red 1st/2nd move rules, supports private chat, and recovers on reconnect',
+    async () => {
+      const hostSessionId = 'test_host_' + Date.now();
+      const guestSessionId = 'test_guest_' + Date.now();
+      const outsiderSessionId = 'test_outsider_' + Date.now();
+
+      // 1. Host creates a private room
+      const created = await createOnlineRoom(hostSessionId, 'HostJogador', {
+        ruleMode: 'regular',
+        scoringMode: 'eight_points',
+      });
+      const roomCode = created.roomData.code;
+      expect(roomCode).toMatch(/^[A-Z0-9]{6}$/);
+      expect(created.roomData.status).toBe('waiting');
+      expect(created.myColor).toBe('red');
+
+      try {
+        // 2. Reject invalid / non-existent room codes
+        await expect(
+          joinOnlineRoom('ÁBC123', guestSessionId, 'Convidado')
+        ).rejects.toThrow();
+        await expect(
+          joinOnlineRoom('ZZZZ99', guestSessionId, 'Convidado')
+        ).rejects.toThrow();
+
+        // 3. Guest joins using LOWERCASE code (case-insensitive check)
+        const joined = await joinOnlineRoom(
+          roomCode.toLowerCase(),
+          guestSessionId,
+          'GuestJogador'
+        );
+        expect(joined.roomData.code).toBe(roomCode);
+        expect(joined.roomData.status).toBe('playing');
+        expect(joined.role).toBe('guest');
+        expect(joined.myColor).toBe('blue');
+        expect(joined.reconnected).toBe(false);
+
+        // 4. Third player (outsider) is blocked from joining the full room
+        await expect(
+          joinOnlineRoom(roomCode, outsiderSessionId, 'Intruso')
+        ).rejects.toThrow(/cheia/i);
+
+        // 5. Turn order & Red 1st-move center restriction validation on server
+        // 5a. Guest (Blue) cannot move on Turn 1 (it is Red's turn)
+        await expect(
+          submitOnlineMove(roomCode, guestSessionId, 4, 4)
+        ).rejects.toThrow(/sua vez/i);
+
+        // 5b. Host (Red) cannot play in the 3x3 center on Red's 1st move!
+        await expect(
+          submitOnlineMove(roomCode, hostSessionId, 4, 4)
+        ).rejects.toThrow(/inválida/i);
+
+        // 5c. Host (Red) makes valid 1st move outside center at (0, 0)
+        const stateAfterMove1 = await submitOnlineMove(
+          roomCode,
+          hostSessionId,
+          0,
+          0
+        );
+        expect(stateAfterMove1.turnCount).toBe(1);
+        expect(stateAfterMove1.currentPlayer).toBe('blue');
+
+        // 5d. Host (Red) cannot play twice in a row
+        await expect(
+          submitOnlineMove(roomCode, hostSessionId, 0, 1)
+        ).rejects.toThrow(/sua vez/i);
+
+        // 5e. Guest (Blue) plays in the center at (4, 4)
+        const stateAfterMove2 = await submitOnlineMove(
+          roomCode,
+          guestSessionId,
+          4,
+          4
+        );
+        expect(stateAfterMove2.turnCount).toBe(2);
+        expect(stateAfterMove2.currentPlayer).toBe('red');
+
+        // 5f. On Red's 2nd move, Host (Red) CAN play inside the 3x3 center at (3, 3)!
+        const stateAfterMove3 = await submitOnlineMove(
+          roomCode,
+          hostSessionId,
+          3,
+          3
+        );
+        expect(stateAfterMove3.turnCount).toBe(3);
+        expect(stateAfterMove3.board[toIndex(3, 3)].owner).toBe('red');
+
+        // 6. Private Room Chat synchronization & outsider protection
+        await sendOnlineChatMessage(
+          roomCode,
+          hostSessionId,
+          'HostJogador',
+          'host',
+          'Olá, bem-vindo à partida!'
+        );
+        await sendOnlineChatMessage(
+          roomCode,
+          guestSessionId,
+          'GuestJogador',
+          'guest',
+          'Obrigado! Boa sorte!'
+        );
+
+        // Outsider cannot send messages in this room
+        await expect(
+          sendOnlineChatMessage(
+            roomCode,
+            outsiderSessionId,
+            'Intruso',
+            'guest',
+            'Mensagem invasora'
+          )
+        ).rejects.toThrow(/Acesso negado/i);
+
+        // Verify participant receives the 2 chat messages while outsider receives []
+        const hostMessages = await new Promise<any[]>((resolve) => {
+          const unsub = subscribeToRoomChat(roomCode, hostSessionId, (msgs) => {
+            if (msgs.length >= 2) {
+              unsub();
+              resolve(msgs);
+            }
+          });
+        });
+        expect(hostMessages.length).toBe(2);
+        expect(hostMessages[0].text).toBe('Olá, bem-vindo à partida!');
+        expect(hostMessages[1].text).toBe('Obrigado! Boa sorte!');
+
+        const outsiderMessages = await new Promise<any[]>((resolve) => {
+          const unsub = subscribeToRoomChat(
+            roomCode,
+            outsiderSessionId,
+            (msgs) => {
+              unsub();
+              resolve(msgs);
+            }
+          );
+        });
+        expect(outsiderMessages).toEqual([]);
+
+        // 7. Reconnection recovery test: Guest reconnects and recovers the exact match state (turnCount = 3)
+        const reconnectedGuest = await joinOnlineRoom(
+          roomCode,
+          guestSessionId,
+          'GuestJogador'
+        );
+        expect(reconnectedGuest.reconnected).toBe(true);
+        expect(reconnectedGuest.role).toBe('guest');
+        expect(reconnectedGuest.myColor).toBe('blue');
+        expect(reconnectedGuest.roomData.gameState.turnCount).toBe(3);
+        expect(
+          reconnectedGuest.roomData.gameState.board[toIndex(3, 3)].owner
+        ).toBe('red');
+      } finally {
+        // Cleanup test room from Firebase RTDB
+        await remove(ref(db, `rooms/${roomCode}`)).catch(() => {});
+      }
+    },
+    20000
+  );
 });

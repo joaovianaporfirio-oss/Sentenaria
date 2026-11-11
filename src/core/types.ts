@@ -4,7 +4,7 @@ export type GameRuleMode = 'regular' | 'adjacent';
 
 export type ScoringMode = 'eight_points' | 'free';
 
-export type OpponentMode = 'pvp' | 'ai';
+export type OpponentMode = 'pvp' | 'ai' | 'online';
 
 export type AIDifficulty = 'easy' | 'medium' | 'hard';
 

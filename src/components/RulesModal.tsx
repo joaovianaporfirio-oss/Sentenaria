@@ -115,11 +115,13 @@ export const RulesModal: React.FC<RulesModalProps> = ({
                   <strong style={{ color: redColor }}>
                     Jogador Vermelho (1º):
                   </strong>{' '}
-                  Tem a vantagem de sempre iniciar a partida, mas{' '}
+                  Sempre inicia a partida. Na sua{' '}
+                  <strong>primeira jogada</strong>, o Vermelho{' '}
                   <strong>
-                    não pode colocar peças nas 9 casas centrais (3×3)
-                  </strong>{' '}
-                  durante toda a partida.
+                    não pode posicionar peça no quadrado central 3×3
+                  </strong>
+                  . A partir da sua <strong>segunda jogada</strong>, o Vermelho
+                  passa a ter acesso normal ao centro!
                 </div>
               </div>
 
@@ -136,11 +138,12 @@ export const RulesModal: React.FC<RulesModalProps> = ({
                   <strong style={{ color: blueColor }}>
                     Jogador Azul (2º):
                   </strong>{' '}
-                  Joga em segundo, porém{' '}
+                  Joga em segundo e{' '}
                   <strong>
-                    pode posicionar símbolos em qualquer casa vazia
+                    pode posicionar símbolos em qualquer casa vazia desde a sua
+                    primeira jogada
                   </strong>
-                  , inclusive no santuário central 3×3!
+                  , inclusive no centro 3×3!
                 </div>
               </div>
             </div>

@@ -73,13 +73,28 @@ export function getOpponent(player: Player): Player {
 }
 
 /**
+ * Returns true if the Red player has already placed at least one symbol on the board.
+ * Since pieces are never removed during a match, Red is on their first move iff
+ * there are currently 0 Red symbols on the board.
+ */
+export function hasRedMadeFirstMove(board: readonly CellState[]): boolean {
+  for (let i = 0; i < TOTAL_CELLS; i++) {
+    if (board[i].owner === 'red') {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Checks whether `player` can legally place a symbol at `(row, col)`.
  *
  * Rules:
  * - Coordinates must be within 0..8.
  * - Target cell must be empty (`owner === null`).
- * - Red player cannot place symbols in the central 3x3 region (rows 3..5, cols 3..5).
- * - Blue player can place symbols in any available cell, including the center.
+ * - Red player cannot place their FIRST move in the central 3x3 region (rows 3..5, cols 3..5).
+ * - From Red's second move onward, Red can play in the central 3x3 region normally.
+ * - Blue player can place symbols in any available cell, including the center, from their first move.
  */
 export function isValidMove(
   board: readonly CellState[],
@@ -94,7 +109,11 @@ export function isValidMove(
   if (board[index].owner !== null) {
     return false;
   }
-  if (player === 'red' && isCenterRegion(row, col)) {
+  if (
+    player === 'red' &&
+    isCenterRegion(row, col) &&
+    !hasRedMadeFirstMove(board)
+  ) {
     return false;
   }
   return true;
@@ -107,7 +126,13 @@ export function isValidMoveIndex(
 ): boolean {
   if (index < 0 || index >= TOTAL_CELLS) return false;
   if (board[index].owner !== null) return false;
-  if (player === 'red' && isCenterIndex(index)) return false;
+  if (
+    player === 'red' &&
+    isCenterIndex(index) &&
+    !hasRedMadeFirstMove(board)
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -119,9 +144,11 @@ export function getValidMoveIndices(
   player: Player
 ): number[] {
   const validIndices: number[] = [];
+  const restrictRedCenter = player === 'red' && !hasRedMadeFirstMove(board);
+
   for (let i = 0; i < TOTAL_CELLS; i++) {
     if (board[i].owner === null) {
-      if (player === 'red' && isCenterIndex(i)) {
+      if (restrictRedCenter && isCenterIndex(i)) {
         continue;
       }
       validIndices.push(i);

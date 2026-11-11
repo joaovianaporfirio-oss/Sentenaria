@@ -6,7 +6,12 @@ import {
    toCoord,
   TOTAL_CELLS,
 } from '../core/constants';
-import { getOpponent, getValidMoveIndices, makeMove } from '../core/gameEngine';
+import {
+  getOpponent,
+  getValidMoveIndices,
+  hasRedMadeFirstMove,
+  makeMove,
+} from '../core/gameEngine';
 import { countImmediateTrincasForMove } from '../core/trincaDetector';
 import {
   AIDifficulty,
@@ -117,7 +122,11 @@ function chooseMediumMove(state: GameState, validIndices: number[]): CellCoord {
     }
 
     // 2. Blocking opponent's immediate trinca (only if opponent can actually play at `idx`)
-    const oppCanPlayHere = !(oppPlayer === 'red' && isCenterIndex(idx));
+    const oppCanPlayHere = !(
+      oppPlayer === 'red' &&
+      isCenterIndex(idx) &&
+      !hasRedMadeFirstMove(state.board)
+    );
     if (oppCanPlayHere) {
       const oppImmediatePts = countImmediateTrincasForMove(
         state.board,
@@ -148,8 +157,8 @@ function chooseMediumMove(state: GameState, validIndices: number[]): CellCoord {
     );
     moveScore += setupValue;
 
-    // 4. Center region bonus for Blue
-    if (aiPlayer === 'blue' && isCenterIndex(idx)) {
+    // 4. Center region bonus (valid for Blue always, and for Red after Red's 1st move)
+    if (isCenterIndex(idx)) {
       moveScore += idx === 40 ? 35 : 22; // 40 is (4,4) exact center
     }
 
@@ -208,12 +217,12 @@ function evaluateCellPositionalPotential(
     }
 
     // Friendly line potential (no opponent pieces blocking this 3-cell segment)
+    // From Red's 2nd move onward, Red can access the center normally.
     if (oppOwned === 0) {
-      const canComplete = !(aiPlayer === 'red' && redForbiddenEmpty);
       const validUnderRule =
         ruleMode === 'regular' ? usedCount === 0 : usedCount <= 1;
 
-      if (canComplete && validUnderRule) {
+      if (validUnderRule) {
         if (aiOwned === 1) {
           // Creates a 2-in-a-row threat!
           score += ruleMode === 'adjacent' && usedCount === 1 ? 85 : 75;
@@ -226,13 +235,9 @@ function evaluateCellPositionalPotential(
 
     // Defensive disruption of opponent's 1-in-a-row before it becomes a 2-in-a-row
     if (aiOwned === 0 && oppOwned === 1) {
-      const oppCanPlay = !(
-        oppPlayer === 'red' &&
-        (isCenterIndex(idx) || redForbiddenEmpty)
-      );
       const validForOpp =
         ruleMode === 'regular' ? usedCount === 0 : usedCount <= 1;
-      if (oppCanPlay && validForOpp) {
+      if (validForOpp) {
         score += 38;
       }
     }
@@ -578,7 +583,11 @@ function rankCandidateMoves(
     }
 
     // 2. Blocking immediate points for opponent
-    const oppCanPlay = !(opponent === 'red' && isCenterIndex(idx));
+    const oppCanPlay = !(
+      opponent === 'red' &&
+      isCenterIndex(idx) &&
+      !hasRedMadeFirstMove(state.board)
+    );
     if (oppCanPlay) {
       const oppPts = countImmediateTrincasForMove(
         state.board,
@@ -610,11 +619,10 @@ function rankCandidateMoves(
         state.formedTrincaIds
       ) * 10;
 
-    // 4. Connectivity & Center control
-    if (mover === 'blue' && isCenterIndex(idx)) {
-      priority += idx === 40 ? 280 : 160;
-    } else if (mover === 'red') {
-      // Red values the inner ring (rows/cols 2 and 6) that borders the 3x3 center
+    // 4. Connectivity & Center control (available to Blue always, and to Red from Red's 2nd move onward)
+    if (isCenterIndex(idx)) {
+      priority += idx === 40 ? 240 : 150;
+    } else {
       const r = Math.floor(idx / 9);
       const c = idx % 9;
       if (r >= 2 && r <= 6 && c >= 2 && c <= 6) {
@@ -718,21 +726,14 @@ export function evaluateBoardState(
       ruleMode === 'regular' ? usedCount === 0 : usedCount <= 1;
     if (!validUnderRule) continue;
 
-    // Evaluate AI-owned partial lines
+    // Evaluate AI-owned partial lines (after turn 0, both players can fill center cells)
     if (aiCount > 0) {
-      const aiCanFillEmpty = !(aiPlayer === 'red' && hasCenterEmpty);
-      if (!aiCanFillEmpty) continue;
-
       if (aiCount === 2 && emptyIdx !== -1) {
         // Live 2-in-a-row threat!
         aiThreatEmptyCells.set(
           emptyIdx,
           (aiThreatEmptyCells.get(emptyIdx) ?? 0) + 1
         );
-        // If AI is Blue and the empty completion cell is in the 3x3 center, Red can NEVER block it!
-        if (aiPlayer === 'blue' && isCenterIndex(emptyIdx)) {
-          aiUnblockableCenterThreats++;
-        }
       } else if (aiCount === 1) {
         aiPotentialLines += ruleMode === 'adjacent' && usedCount === 1 ? 2 : 1;
       }
@@ -740,17 +741,11 @@ export function evaluateBoardState(
 
     // Evaluate Opponent-owned partial lines
     if (oppCount > 0) {
-      const oppCanFillEmpty = !(oppPlayer === 'red' && hasCenterEmpty);
-      if (!oppCanFillEmpty) continue;
-
       if (oppCount === 2 && emptyIdx !== -1) {
         oppThreatEmptyCells.set(
           emptyIdx,
           (oppThreatEmptyCells.get(emptyIdx) ?? 0) + 1
         );
-        if (oppPlayer === 'blue' && isCenterIndex(emptyIdx)) {
-          oppUnblockableCenterThreats++;
-        }
       } else if (oppCount === 1) {
         oppPotentialLines += ruleMode === 'adjacent' && usedCount === 1 ? 2 : 1;
       }

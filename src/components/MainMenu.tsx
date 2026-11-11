@@ -6,6 +6,7 @@ import {
   Check,
   Crown,
   Flame,
+  Globe,
   Infinity as InfinityIcon,
   Layers,
   Moon,
@@ -211,7 +212,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
               {/* PvP Card */}
               <button
                 type="button"
@@ -247,12 +248,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     </span>
                   )}
                 </div>
-                <div className="font-black text-base font-display">
-                  Jogar contra Outro Jogador
+                <div className="font-black text-sm sm:text-base font-display">
+                  2 Jogadores (Local)
                 </div>
                 <p className="text-xs font-semibold opacity-75 mt-1">
-                  2 jogadores localmente no mesmo dispositivo, alternando os
-                  turnos entre Vermelho e Azul.
+                  Jogue localmente no mesmo dispositivo, alternando os turnos
+                  entre Vermelho e Azul.
                 </p>
               </button>
 
@@ -291,12 +292,58 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     </span>
                   )}
                 </div>
-                <div className="font-black text-base font-display">
-                  Jogar contra a Máquina (IA)
+                <div className="font-black text-sm sm:text-base font-display">
+                  Contra a Máquina (IA)
                 </div>
                 <p className="text-xs font-semibold opacity-75 mt-1">
                   Desafie nossa inteligência artificial tática em três níveis de
                   dificuldade.
+                </p>
+              </button>
+
+              {/* Online Multiplayer Card */}
+              <button
+                type="button"
+                onClick={() => selectOpponent('online')}
+                className={`text-left p-4 rounded-2xl border-2 border-b-4 transition-all relative ${
+                  config.opponentMode === 'online'
+                    ? darkMode
+                      ? 'bg-[#27304D] border-sky-400'
+                      : 'bg-sky-50/70 border-sky-500'
+                    : darkMode
+                    ? 'bg-[#232940] border-[#323B59] hover:bg-[#282F49]'
+                    : 'bg-[#FAF7F2] border-[#E4DCCB] hover:bg-[#F3EFE6]'
+                }`}
+                style={
+                  config.opponentMode === 'online'
+                    ? { borderColor: accentColor }
+                    : undefined
+                }
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    <Globe className="w-5 h-5" />
+                  </div>
+                  {config.opponentMode === 'online' && (
+                    <span
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-white"
+                      style={{ backgroundColor: accentColor }}
+                    >
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-black text-sm sm:text-base font-display">
+                    Multiplayer Online
+                  </span>
+                </div>
+                <p className="text-xs font-semibold opacity-75 mt-1">
+                  Crie uma sala privada com código de 6 caracteres ou conecte-se
+                  com chat ao vivo!
                 </p>
               </button>
             </div>
@@ -625,7 +672,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-extrabold">
                     {config.opponentMode === 'pvp'
-                      ? 'Azul'
+                      ? 'Azul (Local)'
+                      : config.opponentMode === 'online'
+                      ? 'Azul (Online)'
                       : `IA (${
                           config.aiDifficulty === 'easy'
                             ? 'Fácil'
@@ -673,8 +722,17 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 borderColor: 'rgba(0,0,0,0.28)',
               }}
             >
-              <Play className="w-5 h-5 fill-current" />
-              <span>Iniciar Partida</span>
+              {config.opponentMode === 'online' ? (
+                <>
+                  <Globe className="w-5 h-5" />
+                  <span>Abrir Lobby Online</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-5 h-5 fill-current" />
+                  <span>Iniciar Partida</span>
+                </>
+              )}
             </button>
           </div>
 

@@ -4,6 +4,9 @@ import {
   Award,
   BookOpen,
   Bot,
+  Check,
+  Copy,
+  Globe,
   History,
   Home,
   Palette,
@@ -13,25 +16,45 @@ import {
   Users,
   Volume2,
   VolumeX,
+  Wifi,
+  WifiOff,
   Zap,
 } from 'lucide-react';
 import { chooseAIMove } from '../ai/aiEngine';
 import { soundEngine } from '../audio/soundEngine';
 import { formatCoordLabel, TARGET_SCORE_EIGHT } from '../core/constants';
-import { makeMove } from '../core/gameEngine';
+import { hasRedMadeFirstMove, makeMove } from '../core/gameEngine';
 import {
   AudioSettings,
   CustomizationSettings,
   GameState,
   Player,
 } from '../core/types';
+import {
+  leaveOnlineRoom,
+  OnlineRole,
+  OnlineRoomData,
+  restartOnlineMatch,
+  submitOnlineMove,
+  subscribeToOnlineRoom,
+} from '../online/onlineService';
 import { BoardView } from './BoardView';
+import { OnlineChatPanel } from './OnlineChatPanel';
 import { PlayerSymbol } from './PlayerSymbol';
+
+export interface ActiveOnlineSession {
+  roomData: OnlineRoomData;
+  playerId: string;
+  playerName: string;
+  role: OnlineRole;
+  myColor: Player;
+}
 
 interface GameScreenProps {
   gameState: GameState;
   customization: CustomizationSettings;
   audioSettings: AudioSettings;
+  onlineSession?: ActiveOnlineSession | null;
   onUpdateGameState: (nextState: GameState) => void;
   onRestartMatch: () => void;
   onReturnToMenu: () => void;
@@ -44,6 +67,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   gameState,
   customization,
   audioSettings,
+  onlineSession = null,
   onUpdateGameState,
   onRestartMatch,
   onReturnToMenu,
@@ -52,19 +76,80 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   onToggleSound,
 }) => {
   const [isAIThinking, setIsAIThinking] = useState(false);
+  const [isSubmittingMove, setIsSubmittingMove] = useState(false);
   const [inspectingBoard, setInspectingBoard] = useState(false);
   const [invalidToast, setInvalidToast] = useState<string | null>(null);
+  const [onlineRoom, setOnlineRoom] = useState<OnlineRoomData | null>(
+    onlineSession?.roomData ?? null
+  );
+  const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+
   const aiTimerRef = useRef<number | null>(null);
+  const prevTurnCountRef = useRef<number>(gameState.turnCount);
 
   const { config, currentPlayer, scores, status, winner, moveHistory, lastMove } =
     gameState;
-  const { darkMode, redColor, blueColor, accentColor, symbolStyle, animationsEnabled } =
-    customization;
+  const {
+    darkMode,
+    redColor,
+    blueColor,
+    accentColor,
+    symbolStyle,
+    animationsEnabled,
+  } = customization;
+
+  const isOnlineMode = Boolean(onlineSession);
+  const isMyOnlineTurn =
+    isOnlineMode &&
+    status === 'playing' &&
+    currentPlayer === onlineSession?.myColor &&
+    onlineRoom?.status === 'playing';
 
   const isAITurn =
+    !isOnlineMode &&
     status === 'playing' &&
     config.opponentMode === 'ai' &&
     currentPlayer === config.aiPlayer;
+
+  const redHasMoved = hasRedMadeFirstMove(gameState.board);
+
+  // Subscribe to real-time updates when in Online Multiplayer mode
+  useEffect(() => {
+    if (!onlineSession) {
+      setOnlineRoom(null);
+      return;
+    }
+
+    const unsub = subscribeToOnlineRoom(
+      onlineSession.roomData.code,
+      onlineSession.playerId,
+      onlineSession.role,
+      (updatedRoom) => {
+        setOnlineRoom(updatedRoom);
+
+        // Play audio feedback when a remote move arrives
+        if (updatedRoom.gameState.turnCount > prevTurnCountRef.current) {
+          const latestMove = updatedRoom.gameState.lastMove;
+          if (latestMove && latestMove.player !== onlineSession.myColor) {
+            soundEngine.playPiecePlace(latestMove.player);
+            if (latestMove.pointsEarned > 0) {
+              soundEngine.playTrincaFormed(latestMove.pointsEarned);
+              soundEngine.playScoreUpdate(
+                updatedRoom.gameState.scores[latestMove.player]
+              );
+            }
+          }
+        }
+        prevTurnCountRef.current = updatedRoom.gameState.turnCount;
+        onUpdateGameState(updatedRoom.gameState);
+      },
+      (errMsg) => {
+        setInvalidToast(errMsg);
+      }
+    );
+
+    return () => unsub();
+  }, [onlineSession?.roomData.code, onlineSession?.playerId]);
 
   // Reset board inspection mode when match restarts
   useEffect(() => {
@@ -76,10 +161,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   // Trigger Victory / End of Match effects
   useEffect(() => {
     if (status === 'finished') {
-      const isHumanWin =
-        config.opponentMode === 'pvp'
-          ? winner !== 'draw'
-          : winner !== 'draw' && winner !== config.aiPlayer;
+      const isHumanWin = isOnlineMode
+        ? winner === onlineSession?.myColor
+        : config.opponentMode === 'pvp'
+        ? winner !== 'draw'
+        : winner !== 'draw' && winner !== config.aiPlayer;
 
       if (winner === 'draw') {
         soundEngine.playMatchEnd('draw');
@@ -103,7 +189,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     }
   }, [status]);
 
-  // AI Turn Execution
+  // AI Turn Execution (Local vs AI mode only)
   useEffect(() => {
     if (!isAITurn) {
       setIsAIThinking(false);
@@ -147,9 +233,48 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     config.aiPlayer,
   ]);
 
-  const handleHumanCellClick = (row: number, col: number) => {
-    if (status !== 'playing' || isAIThinking || isAITurn) return;
+  const handleHumanCellClick = async (row: number, col: number) => {
+    if (status !== 'playing' || isAIThinking || isAITurn || isSubmittingMove) {
+      return;
+    }
 
+    // Online Multiplayer Move Execution (Authoritative Firebase Transaction)
+    if (isOnlineMode && onlineSession) {
+      if (!isMyOnlineTurn) {
+        soundEngine.playInvalidMove();
+        setInvalidToast('Aguarde a vez do seu adversário jogar!');
+        setTimeout(() => setInvalidToast(null), 2200);
+        return;
+      }
+
+      setIsSubmittingMove(true);
+      try {
+        prevTurnCountRef.current = gameState.turnCount + 1;
+        const nextState = await submitOnlineMove(
+          onlineSession.roomData.code,
+          onlineSession.playerId,
+          row,
+          col
+        );
+
+        soundEngine.playPiecePlace(onlineSession.myColor);
+        if (nextState.lastMove && nextState.lastMove.pointsEarned > 0) {
+          soundEngine.playTrincaFormed(nextState.lastMove.pointsEarned);
+          soundEngine.playScoreUpdate(nextState.scores[onlineSession.myColor]);
+        }
+
+        onUpdateGameState(nextState);
+      } catch (err: any) {
+        soundEngine.playInvalidMove();
+        setInvalidToast(err?.message || 'Não foi possível registrar a jogada.');
+        setTimeout(() => setInvalidToast(null), 2600);
+      } finally {
+        setIsSubmittingMove(false);
+      }
+      return;
+    }
+
+    // Local PvP or Human vs AI Move Execution
     try {
       const movingPlayer = gameState.currentPlayer;
       const nextState = makeMove(gameState, row, col);
@@ -170,19 +295,68 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     soundEngine.playInvalidMove();
     if (
       currentPlayer === 'red' &&
+      !redHasMoved &&
       row >= 3 &&
       row <= 5 &&
       col >= 3 &&
       col <= 5
     ) {
       setInvalidToast(
-        'O jogador Vermelho não pode posicionar peças na região central 3×3!'
+        'O jogador Vermelho não pode realizar sua 1ª jogada no quadrado central 3×3! (Liberado a partir da 2ª jogada).'
       );
-      setTimeout(() => setInvalidToast(null), 2600);
+      setTimeout(() => setInvalidToast(null), 3200);
+    } else if (isOnlineMode && !isMyOnlineTurn) {
+      setInvalidToast('Aguarde o turno do seu adversário online!');
+      setTimeout(() => setInvalidToast(null), 2400);
+    }
+  };
+
+  const handleRestartOrRematch = async () => {
+    soundEngine.playMenuClick();
+    if (isOnlineMode && onlineSession) {
+      await restartOnlineMatch(
+        onlineSession.roomData.code,
+        onlineSession.playerId
+      );
+    } else {
+      onRestartMatch();
+    }
+  };
+
+  const handleBackToMenu = async () => {
+    soundEngine.playMenuSecondary();
+    if (isOnlineMode && onlineSession) {
+      await leaveOnlineRoom(
+        onlineSession.roomData.code,
+        onlineSession.playerId,
+        onlineSession.role
+      );
+    }
+    onReturnToMenu();
+  };
+
+  const handleCopyRoomCode = async () => {
+    if (!onlineRoom) return;
+    try {
+      await navigator.clipboard.writeText(onlineRoom.code);
+      setCopiedRoomCode(true);
+      soundEngine.playMenuClick();
+      setTimeout(() => setCopiedRoomCode(false), 2000);
+    } catch {
+      // Ignore
     }
   };
 
   const getPlayerLabel = (p: Player): string => {
+    if (isOnlineMode && onlineRoom) {
+      if (p === 'red') {
+        const name = onlineRoom.players.host.name;
+        return onlineSession?.myColor === 'red' ? `${name} (Você)` : name;
+      } else {
+        const name = onlineRoom.players.guest?.name || 'Aguardando...';
+        return onlineSession?.myColor === 'blue' ? `${name} (Você)` : name;
+      }
+    }
     if (config.opponentMode === 'pvp') {
       return p === 'red' ? 'Jogador Vermelho' : 'Jogador Azul';
     }
@@ -195,6 +369,24 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     return config.aiPlayer === p ? `Máquina (${diffLabel})` : 'Você (Humano)';
   };
 
+  // Determine opponent connection health in Online mode
+  const opponentParticipant =
+    isOnlineMode && onlineRoom
+      ? onlineSession?.role === 'host'
+        ? onlineRoom.players.guest
+        : onlineRoom.players.host
+      : null;
+
+  const isOpponentDisconnected =
+    isOnlineMode &&
+    opponentParticipant !== null &&
+    !opponentParticipant.connected;
+
+  const hasOpponentLeft =
+    isOnlineMode &&
+    opponentParticipant !== null &&
+    opponentParticipant.leftRoom;
+
   const cardSurface = darkMode
     ? 'bg-[#1E2336] border-[#2E3652] text-slate-100 shadow-[0_6px_0_#101320]'
     : 'bg-white border-[#E2D9C8] text-slate-800 shadow-[0_6px_0_#D5CBB8]';
@@ -205,13 +397,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       <header
         className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-2xl border-2 ${cardSurface}`}
       >
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           <button
             type="button"
-            onClick={() => {
-              soundEngine.playMenuSecondary();
-              onReturnToMenu();
-            }}
+            onClick={handleBackToMenu}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-extrabold text-xs sm:text-sm border-2 border-b-4 transition-all active:translate-y-0.5 active:border-b-2 ${
               darkMode
                 ? 'bg-[#262D47] border-[#384266] text-slate-200 hover:bg-[#2F3756]'
@@ -219,8 +408,28 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             }`}
           >
             <Home className="w-4 h-4" />
-            <span>Menu</span>
+            <span>{isOnlineMode ? 'Sair da Sala' : 'Menu'}</span>
           </button>
+
+          {/* Online Room Code Pill */}
+          {isOnlineMode && onlineRoom && (
+            <button
+              type="button"
+              onClick={handleCopyRoomCode}
+              title="Copiar código da sala"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span className="font-mono tracking-wider">
+                SALA: {onlineRoom.code}
+              </span>
+              {copiedRoomCode ? (
+                <Check className="w-3.5 h-3.5" />
+              ) : (
+                <Copy className="w-3 h-3 opacity-75" />
+              )}
+            </button>
+          )}
 
           <div className="flex items-center gap-1.5 flex-wrap">
             <span
@@ -242,28 +451,30 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 ? 'Corrida 8 Pontos'
                 : 'Modo Livre (81 Casas)'}
             </span>
-            <span
-              className={`hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${
-                darkMode
-                  ? 'bg-[#242B42] border-[#343E5E] text-slate-300'
-                  : 'bg-slate-100 border-slate-200 text-slate-600'
-              }`}
-            >
-              {config.opponentMode === 'pvp' ? (
-                <>
-                  <Users className="w-3.5 h-3.5" /> 2 Jogadores
-                </>
-              ) : (
-                <>
-                  <Bot className="w-3.5 h-3.5" /> vs{' '}
-                  {config.aiDifficulty === 'easy'
-                    ? 'IA Fácil'
-                    : config.aiDifficulty === 'medium'
-                    ? 'IA Média'
-                    : 'IA Difícil'}
-                </>
-              )}
-            </span>
+            {!isOnlineMode && (
+              <span
+                className={`hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${
+                  darkMode
+                    ? 'bg-[#242B42] border-[#343E5E] text-slate-300'
+                    : 'bg-slate-100 border-slate-200 text-slate-600'
+                }`}
+              >
+                {config.opponentMode === 'pvp' ? (
+                  <>
+                    <Users className="w-3.5 h-3.5" /> 2 Jogadores
+                  </>
+                ) : (
+                  <>
+                    <Bot className="w-3.5 h-3.5" /> vs{' '}
+                    {config.aiDifficulty === 'easy'
+                      ? 'IA Fácil'
+                      : config.aiDifficulty === 'medium'
+                      ? 'IA Média'
+                      : 'IA Difícil'}
+                  </>
+                )}
+              </span>
+            )}
           </div>
         </div>
 
@@ -319,10 +530,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              soundEngine.playMenuClick();
-              onRestartMatch();
-            }}
+            onClick={handleRestartOrRematch}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-extrabold text-xs sm:text-sm text-white border-2 border-b-4 transition-all active:translate-y-0.5 active:border-b-2"
             style={{
               backgroundColor: accentColor,
@@ -330,16 +538,38 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             }}
           >
             <RotateCcw className="w-4 h-4" />
-            <span>Reiniciar</span>
+            <span>{isOnlineMode ? 'Revanche' : 'Reiniciar'}</span>
           </button>
         </div>
       </header>
 
-      {/* Main Content Layout: Players + Board + Move History */}
+      {/* Online Opponent Disconnection / Reconnection Alert Banner */}
+      {isOnlineMode && (isOpponentDisconnected || hasOpponentLeft) && (
+        <div
+          className={`px-4 py-3 rounded-2xl border-2 flex items-center justify-between gap-3 animate-fade-in ${
+            hasOpponentLeft
+              ? 'bg-red-500/15 border-red-500/40 text-red-500'
+              : 'bg-amber-500/15 border-amber-500/40 text-amber-500'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 text-xs sm:text-sm font-extrabold">
+            <WifiOff className="w-5 h-5 shrink-0" />
+            <span>
+              {hasOpponentLeft
+                ? `O adversário (${opponentParticipant?.name}) saiu da sala. Ele ainda pode retornar usando o código ${onlineRoom?.code}.`
+                : `Adversário (${opponentParticipant?.name}) perdeu a conexão temporariamente. O progresso da partida está salvo — aguardando reconexão...`}
+            </span>
+          </div>
+          <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg bg-black/10 dark:bg-white/10 shrink-0">
+            Código: {onlineRoom?.code}
+          </span>
+        </div>
+      )}
+
+      {/* Main Content Layout: Players + Board + Chat/History */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
         {/* Left Column: Scorecards & Turn Indicator */}
         <div className="lg:col-span-3 flex flex-col gap-3">
-          {/* Player Cards (Side by side on mobile/tablet, stacked on desktop) */}
           <div className="grid grid-cols-2 lg:grid-cols-1 gap-3">
             {/* RED PLAYER CARD */}
             <div
@@ -360,7 +590,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   className="absolute -top-2.5 right-3 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider text-white shadow"
                   style={{ backgroundColor: redColor }}
                 >
-                  Jogando Agora
+                  {isOnlineMode && onlineSession?.myColor === 'red'
+                    ? 'Sua Vez!'
+                    : 'Jogando Agora'}
                 </span>
               )}
 
@@ -381,11 +613,27 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     />
                   </div>
                   <div className="min-w-0">
-                    <div
-                      className="text-xs font-black uppercase tracking-wider truncate"
-                      style={{ color: redColor }}
-                    >
-                      Vermelho (1º)
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="text-xs font-black uppercase tracking-wider truncate"
+                        style={{ color: redColor }}
+                      >
+                        Vermelho (1º)
+                      </span>
+                      {isOnlineMode && onlineRoom && (
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            onlineRoom.players.host.connected
+                              ? 'bg-emerald-500'
+                              : 'bg-amber-500 animate-pulse'
+                          }`}
+                          title={
+                            onlineRoom.players.host.connected
+                              ? 'Online'
+                              : 'Desconectado'
+                          }
+                        />
+                      )}
                     </div>
                     <div className="text-xs font-bold opacity-75 truncate">
                       {getPlayerLabel('red')}
@@ -408,7 +656,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 </div>
               </div>
 
-              {/* 8-Points Progress Bar */}
               {config.scoringMode === 'eight_points' && (
                 <div className="mt-2.5 w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-700/70 overflow-hidden p-0.5">
                   <div
@@ -425,7 +672,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               )}
 
               <div className="mt-2 text-[11px] font-semibold opacity-70 flex items-center justify-between">
-                <span>Sem acesso ao centro 3×3</span>
+                <span>
+                  {redHasMoved
+                    ? 'Acesso livre ao centro 3×3'
+                    : '1ª jogada fora do centro 3×3'}
+                </span>
                 <span>{scores.red} trincas</span>
               </div>
             </div>
@@ -449,7 +700,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   className="absolute -top-2.5 right-3 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider text-white shadow"
                   style={{ backgroundColor: blueColor }}
                 >
-                  {isAIThinking ? 'IA Pensando...' : 'Jogando Agora'}
+                  {isAIThinking
+                    ? 'IA Pensando...'
+                    : isOnlineMode && onlineSession?.myColor === 'blue'
+                    ? 'Sua Vez!'
+                    : 'Jogando Agora'}
                 </span>
               )}
 
@@ -470,11 +725,27 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                     />
                   </div>
                   <div className="min-w-0">
-                    <div
-                      className="text-xs font-black uppercase tracking-wider truncate"
-                      style={{ color: blueColor }}
-                    >
-                      Azul (2º)
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="text-xs font-black uppercase tracking-wider truncate"
+                        style={{ color: blueColor }}
+                      >
+                        Azul (2º)
+                      </span>
+                      {isOnlineMode && onlineRoom?.players.guest && (
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            onlineRoom.players.guest.connected
+                              ? 'bg-emerald-500'
+                              : 'bg-amber-500 animate-pulse'
+                          }`}
+                          title={
+                            onlineRoom.players.guest.connected
+                              ? 'Online'
+                              : 'Desconectado'
+                          }
+                        />
+                      )}
                     </div>
                     <div className="text-xs font-bold opacity-75 truncate">
                       {getPlayerLabel('blue')}
@@ -521,9 +792,17 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
           {/* Active Turn / Last Trinca Callout Card */}
           <div className={`p-3.5 rounded-2xl border-2 ${cardSurface}`}>
-            <div className="text-xs font-black uppercase tracking-wider opacity-60 mb-1">
-              Status da Partida • Turno #{gameState.turnCount + 1}
+            <div className="text-xs font-black uppercase tracking-wider opacity-60 mb-1 flex items-center justify-between">
+              <span>Status • Turno #{gameState.turnCount + 1}</span>
+              {isOnlineMode && onlineSession && (
+                <span className="flex items-center gap-1 text-emerald-500">
+                  <Wifi className="w-3 h-3" />
+                  Você é{' '}
+                  {onlineSession.myColor === 'red' ? 'Vermelho' : 'Azul'}
+                </span>
+              )}
             </div>
+
             {status === 'playing' ? (
               <div className="flex items-center gap-2 text-sm font-extrabold">
                 <span
@@ -536,6 +815,18 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 <span>
                   {isAIThinking
                     ? 'A IA está analisando o tabuleiro...'
+                    : isOnlineMode
+                    ? isMyOnlineTurn
+                      ? `Sua vez de jogar (${
+                          onlineSession?.myColor === 'red'
+                            ? 'Vermelho'
+                            : 'Azul'
+                        })!`
+                      : `Aguardando jogada de ${
+                          currentPlayer === 'red'
+                            ? onlineRoom?.players.host.name || 'Vermelho'
+                            : onlineRoom?.players.guest?.name || 'Azul'
+                        }...`
                     : `Vez do jogador ${
                         currentPlayer === 'red' ? 'Vermelho' : 'Azul'
                       }`}
@@ -594,14 +885,30 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             formedTrincas={gameState.formedTrincas}
             lastMove={lastMove}
             customization={customization}
-            disabled={status !== 'playing' || isAIThinking || isAITurn}
+            disabled={
+              status !== 'playing' ||
+              isAIThinking ||
+              isAITurn ||
+              isSubmittingMove ||
+              (isOnlineMode && !isMyOnlineTurn)
+            }
             onCellClick={handleHumanCellClick}
             onInvalidCellClick={handleInvalidCellClick}
           />
         </div>
 
-        {/* Right Column: Move History & Mode Rules Summary */}
+        {/* Right Column: Private Room Chat (when Online) + Move History */}
         <div className="lg:col-span-3 flex flex-col gap-3">
+          {isOnlineMode && onlineSession && (
+            <OnlineChatPanel
+              roomCode={onlineSession.roomData.code}
+              playerId={onlineSession.playerId}
+              playerName={onlineSession.playerName}
+              playerRole={onlineSession.role}
+              customization={customization}
+            />
+          )}
+
           <div className={`p-3.5 rounded-2xl border-2 ${cardSurface}`}>
             <div className="flex items-center justify-between mb-2.5">
               <div className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider opacity-75">
@@ -614,13 +921,17 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             </div>
 
             {moveHistory.length === 0 ? (
-              <div className="py-8 text-center text-xs font-semibold opacity-55">
+              <div className="py-5 text-center text-xs font-semibold opacity-55">
                 Nenhuma jogada realizada ainda.
-                <br />O jogador <strong>Vermelho</strong> inicia a partida fora
-                do centro 3×3!
+                <br />A <strong>1ª jogada do Vermelho</strong> deve ser fora do
+                centro 3×3!
               </div>
             ) : (
-              <div className="max-h-[260px] lg:max-h-[340px] overflow-y-auto pr-1 flex flex-col gap-1.5">
+              <div
+                className={`${
+                  isOnlineMode ? 'max-h-[160px]' : 'max-h-[260px] lg:max-h-[340px]'
+                } overflow-y-auto pr-1 flex flex-col gap-1.5`}
+              >
                 {[...moveHistory].reverse().map((move) => {
                   const pColor = move.player === 'red' ? redColor : blueColor;
                   return (
@@ -668,23 +979,24 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             )}
           </div>
 
-          {/* Active Rule Reminder Card */}
-          <div className={`p-3.5 rounded-2xl border-2 text-xs ${cardSurface}`}>
-            <div className="font-black uppercase tracking-wider opacity-70 mb-1.5 flex items-center gap-1.5">
-              <Award className="w-4 h-4" style={{ color: accentColor }} />
-              <span>
-                Regra Ativa:{' '}
+          {!isOnlineMode && (
+            <div className={`p-3.5 rounded-2xl border-2 text-xs ${cardSurface}`}>
+              <div className="font-black uppercase tracking-wider opacity-70 mb-1.5 flex items-center gap-1.5">
+                <Award className="w-4 h-4" style={{ color: accentColor }} />
+                <span>
+                  Regra Ativa:{' '}
+                  {config.ruleMode === 'regular'
+                    ? 'Modo Regular'
+                    : 'Modo Adjacente'}
+                </span>
+              </div>
+              <p className="font-semibold opacity-80 leading-relaxed">
                 {config.ruleMode === 'regular'
-                  ? 'Modo Regular'
-                  : 'Modo Adjacente'}
-              </span>
+                  ? 'Cada peça pode participar de apenas uma única trinca. Casas que já formaram trincas ficam bloqueadas para novas combinações.'
+                  : 'Você pode reutilizar 1 peça de uma trinca já formada para criar uma nova trinca adjacente, desde que pelo menos 2 das 3 casas sejam inéditas!'}
+              </p>
             </div>
-            <p className="font-semibold opacity-80 leading-relaxed">
-              {config.ruleMode === 'regular'
-                ? 'Cada peça pode participar de apenas uma única trinca. Casas que já formaram trincas ficam bloqueadas para novas combinações.'
-                : 'Você pode reutilizar 1 peça de uma trinca já formada para criar uma nova trinca adjacente, desde que pelo menos 2 das 3 casas sejam inéditas!'}
-            </p>
-          </div>
+          )}
         </div>
       </div>
 
@@ -795,10 +1107,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             <div className="flex flex-col sm:flex-row gap-2.5">
               <button
                 type="button"
-                onClick={() => {
-                  soundEngine.playMenuClick();
-                  onRestartMatch();
-                }}
+                onClick={handleRestartOrRematch}
                 className="flex-1 py-3 px-4 rounded-2xl font-black text-white border-2 border-b-4 transition-all active:translate-y-0.5 active:border-b-2 flex items-center justify-center gap-2"
                 style={{
                   backgroundColor: accentColor,
@@ -806,7 +1115,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 }}
               >
                 <RotateCcw className="w-4 h-4" />
-                <span>Jogar Novamente</span>
+                <span>
+                  {isOnlineMode ? 'Revanche na Sala' : 'Jogar Novamente'}
+                </span>
               </button>
 
               <button
@@ -827,10 +1138,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
             <button
               type="button"
-              onClick={() => {
-                soundEngine.playMenuSecondary();
-                onReturnToMenu();
-              }}
+              onClick={handleBackToMenu}
               className="mt-3 text-xs font-extrabold underline opacity-75 hover:opacity-100"
             >
               Voltar ao Menu Principal

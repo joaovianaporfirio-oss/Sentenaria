@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { soundEngine } from './audio/soundEngine';
 import { CustomizerModal } from './components/CustomizerModal';
-import { GameScreen } from './components/GameScreen';
+import { ActiveOnlineSession, GameScreen } from './components/GameScreen';
 import { MainMenu } from './components/MainMenu';
+import { OnlineLobbyModal } from './components/OnlineLobbyModal';
 import { RulesModal } from './components/RulesModal';
 import { SettingsModal } from './components/SettingsModal';
 import { createInitialGameState } from './core/gameEngine';
@@ -26,11 +27,13 @@ import {
 } from './settings/storageManager';
 
 type ActiveScreen = 'menu' | 'game';
-type ActiveModal = 'none' | 'customizer' | 'settings' | 'rules';
+type ActiveModal = 'none' | 'customizer' | 'settings' | 'rules' | 'online_lobby';
 
 export const App: React.FC = () => {
   const [screen, setScreen] = useState<ActiveScreen>('menu');
   const [modal, setModal] = useState<ActiveModal>('none');
+  const [onlineSession, setOnlineSession] =
+    useState<ActiveOnlineSession | null>(null);
 
   const [config, setConfig] = useState<GameConfig>(() => loadGameConfig());
   const [customization, setCustomization] = useState<CustomizationSettings>(
@@ -72,8 +75,20 @@ export const App: React.FC = () => {
   };
 
   const handleStartGame = () => {
+    if (config.opponentMode === 'online') {
+      setModal('online_lobby');
+      return;
+    }
+    setOnlineSession(null);
     const freshState = createInitialGameState(config);
     setGameState(freshState);
+    setScreen('game');
+  };
+
+  const handleEnterOnlineMatch = (session: ActiveOnlineSession) => {
+    setOnlineSession(session);
+    setGameState(session.roomData.gameState);
+    setModal('none');
     setScreen('game');
   };
 
@@ -178,12 +193,25 @@ export const App: React.FC = () => {
           gameState={gameState}
           customization={customization}
           audioSettings={audioSettings}
+          onlineSession={onlineSession}
           onUpdateGameState={handleUpdateGameState}
           onRestartMatch={handleRestartMatch}
-          onReturnToMenu={() => setScreen('menu')}
+          onReturnToMenu={() => {
+            setOnlineSession(null);
+            setScreen('menu');
+          }}
           onOpenRules={() => setModal('rules')}
           onOpenCustomizer={() => setModal('customizer')}
           onToggleSound={handleToggleSound}
+        />
+      )}
+
+      {modal === 'online_lobby' && (
+        <OnlineLobbyModal
+          config={config}
+          customization={customization}
+          onEnterOnlineMatch={handleEnterOnlineMatch}
+          onClose={() => setModal('none')}
         />
       )}
 

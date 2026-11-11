@@ -19,7 +19,8 @@ export function toCoord(index: number): CellCoord {
 
 /**
  * Checks whether a cell at (row, col) is inside the 3x3 central region (rows 3..5, cols 3..5).
- * Rule 5 & 6: The Red player cannot place symbols in this 9-cell central region.
+ * Rule: The Red player cannot place their FIRST move in this 9-cell central region.
+ * From Red's second move onward, Red can access the central region normally.
  */
 export function isCenterRegion(row: number, col: number): boolean {
   return row >= CENTER_MIN && row <= CENTER_MAX && col >= CENTER_MIN && col <= CENTER_MAX;
