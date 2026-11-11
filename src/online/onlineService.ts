@@ -5,6 +5,7 @@ import {
   push,
   ref,
   runTransaction,
+  serverTimestamp,
   set,
   update,
 } from 'firebase/database';
@@ -461,6 +462,7 @@ export async function joinOnlineRoom(
   role: OnlineRole;
   myColor: Player;
   reconnected: boolean;
+  effectivePlayerId: string;
 }> {
   const validation = validateAndNormalizeRoomCode(rawCode);
   if (!validation.valid) {
@@ -478,6 +480,17 @@ export async function joinOnlineRoom(
       `A sala "${code}" não foi encontrada. Verifique se o código de 6 caracteres está correto.`
     );
   }
+
+  // If the room is still waiting for a Guest and the caller shares the same browser session ID as the Host
+  // (e.g. testing in a duplicated tab or same browser profile), assign a distinct Guest UID so both seats have unique IDs.
+  const initialRoomVal = initialSnap.val();
+  const effectivePlayerId =
+    initialRoomVal &&
+    initialRoomVal.status === 'waiting' &&
+    (!initialRoomVal.guestId || initialRoomVal.guestId === '') &&
+    initialRoomVal.hostId === playerId
+      ? `${playerId}_guest_${Math.random().toString(36).slice(2, 6)}`
+      : playerId;
 
   let abortReason: 'NOT_FOUND' | 'ABANDONED' | 'FULL' | null = null;
   let assignedRole = 'guest' as OnlineRole;
@@ -497,8 +510,8 @@ export async function joinOnlineRoom(
 
     const now = Date.now();
 
-    // Case 1: Host is reconnecting to their own room
-    if (current.hostId === playerId) {
+    // Case 1: Host is reconnecting to an already active room
+    if (current.hostId === effectivePlayerId) {
       assignedRole = 'host';
       assignedColor = 'red';
       isReconnect = true;
@@ -512,7 +525,7 @@ export async function joinOnlineRoom(
     }
 
     // Case 2: Guest is reconnecting to their own room
-    if (current.guestId && current.guestId === playerId) {
+    if (current.guestId && current.guestId === effectivePlayerId) {
       assignedRole = 'guest';
       assignedColor = 'blue';
       isReconnect = true;
@@ -544,7 +557,7 @@ export async function joinOnlineRoom(
     assignedColor = 'blue';
     isReconnect = false;
 
-    current.guestId = playerId;
+    current.guestId = effectivePlayerId;
     current.status =
       current.gameState?.status === 'finished' ? 'finished' : 'playing';
     current.updatedAt = now;
@@ -552,7 +565,7 @@ export async function joinOnlineRoom(
       current.players = {};
     }
     current.players.guest = {
-      id: playerId,
+      id: effectivePlayerId,
       name: cleanName,
       color: 'blue',
       role: 'guest',
@@ -583,7 +596,7 @@ export async function joinOnlineRoom(
   const roomData = deserializeRoomData(txResult.snapshot.val());
   saveActiveRoomSession({
     roomCode: code,
-    playerId,
+    playerId: effectivePlayerId,
     playerName:
       assignedRole === 'host'
         ? roomData.players.host.name
@@ -598,6 +611,7 @@ export async function joinOnlineRoom(
     role: assignedRole,
     myColor: assignedColor,
     reconnected: isReconnect,
+    effectivePlayerId,
   };
 }
 
@@ -849,18 +863,20 @@ export async function sendOnlineChatMessage(
     );
   }
 
-  const senderColor: Player = senderRole === 'host' ? 'red' : 'blue';
+  const senderColor: Player = roomVal.hostId === senderId ? 'red' : 'blue';
+  const actualRole: OnlineRole = roomVal.hostId === senderId ? 'host' : 'guest';
   const messagesListRef = ref(db, `rooms/${code}/messages`);
   const newMsgRef = push(messagesListRef);
 
-  const payload: OnlineChatMessage = {
+  const payload = {
     id: newMsgRef.key || `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     senderId,
-    senderName: senderName.trim() || (senderRole === 'host' ? 'Host' : 'Convidado'),
-    senderRole,
+    senderName: senderName.trim() || (actualRole === 'host' ? 'Host' : 'Convidado'),
+    senderRole: actualRole,
     senderColor,
     text: validation.sanitized,
-    timestamp: Date.now(),
+    timestamp: serverTimestamp(),
+    clientTimestamp: Date.now(),
   };
 
   await set(newMsgRef, payload);
@@ -869,6 +885,7 @@ export async function sendOnlineChatMessage(
 /**
  * Subscribes to the private chat messages of a room in real time.
  * Verifies that `playerId` is a registered participant of the room before delivering messages.
+ * Returns a single chronologically ordered array (oldest to newest) containing messages from both players.
  */
 export function subscribeToRoomChat(
   roomCode: string,
@@ -896,9 +913,30 @@ export function subscribeToRoomChat(
       return;
     }
 
-    const list: OnlineChatMessage[] = Object.values(rawMessages)
-      .filter((m): m is OnlineChatMessage => Boolean(m && typeof m === 'object'))
-      .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+    const list: OnlineChatMessage[] = Object.entries(rawMessages)
+      .filter((entry): entry is [string, Record<string, any>] =>
+        Boolean(entry[1] && typeof entry[1] === 'object')
+      )
+      .map(([key, m]) => ({
+        id: String(m.id || key),
+        senderId: String(m.senderId || ''),
+        senderName: String(m.senderName || 'Jogador'),
+        senderRole: (m.senderRole === 'host' ? 'host' : 'guest') as OnlineRole,
+        senderColor: (m.senderColor === 'red' ? 'red' : 'blue') as Player,
+        text: String(m.text || ''),
+        timestamp:
+          typeof m.timestamp === 'number'
+            ? m.timestamp
+            : typeof m.clientTimestamp === 'number'
+            ? m.clientTimestamp
+            : 0,
+      }))
+      .sort((a, b) => {
+        if (a.timestamp !== b.timestamp) {
+          return a.timestamp - b.timestamp;
+        }
+        return a.id.localeCompare(b.id);
+      });
 
     onMessagesChange(list);
   });

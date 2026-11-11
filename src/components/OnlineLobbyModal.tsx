@@ -170,7 +170,7 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
       soundEngine.playTrincaFormed(1);
       onEnterOnlineMatch({
         roomData: joined.roomData,
-        playerId,
+        playerId: joined.effectivePlayerId,
         playerName: finalName,
         role: joined.role,
         myColor: joined.myColor,
@@ -199,7 +199,7 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
       soundEngine.playTrincaFormed(1);
       onEnterOnlineMatch({
         roomData: joined.roomData,
-        playerId: savedSession.playerId,
+        playerId: joined.effectivePlayerId,
         playerName: savedSession.playerName,
         role: joined.role,
         myColor: joined.myColor,

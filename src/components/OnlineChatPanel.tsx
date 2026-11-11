@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, Send, ShieldCheck } from 'lucide-react';
 import { soundEngine } from '../audio/soundEngine';
 import { CustomizationSettings } from '../core/types';
@@ -16,6 +16,23 @@ interface OnlineChatPanelProps {
   playerName: string;
   playerRole: OnlineRole;
   customization: CustomizationSettings;
+}
+
+/**
+ * Helper to sort a unified array of chat messages strictly in chronological order
+ * (from oldest to newest), with deterministic tie-breaking by Firebase push ID.
+ */
+export function sortChatMessagesChronologically(
+  messages: readonly OnlineChatMessage[]
+): OnlineChatMessage[] {
+  return [...messages].sort((a, b) => {
+    const timeA = typeof a.timestamp === 'number' ? a.timestamp : 0;
+    const timeB = typeof b.timestamp === 'number' ? b.timestamp : 0;
+    if (timeA !== timeB) {
+      return timeA - timeB;
+    }
+    return String(a.id).localeCompare(String(b.id));
+  });
 }
 
 export const OnlineChatPanel: React.FC<OnlineChatPanelProps> = ({
@@ -36,23 +53,30 @@ export const OnlineChatPanel: React.FC<OnlineChatPanelProps> = ({
 
   useEffect(() => {
     const unsubscribe = subscribeToRoomChat(roomCode, playerId, (list) => {
-      if (list.length > prevCountRef.current && prevCountRef.current > 0) {
-        const newest = list[list.length - 1];
+      const ordered = sortChatMessagesChronologically(list);
+      if (ordered.length > prevCountRef.current && prevCountRef.current > 0) {
+        const newest = ordered[ordered.length - 1];
         if (newest && newest.senderId !== playerId) {
           soundEngine.playMenuClick();
         }
       }
-      prevCountRef.current = list.length;
-      setMessages(list);
+      prevCountRef.current = ordered.length;
+      setMessages(ordered);
     });
 
     return () => unsubscribe();
   }, [roomCode, playerId]);
 
-  // Auto-scroll to newest message
+  // Single unified array of messages from both players, sorted oldest -> newest
+  const chronologicalMessages = useMemo(
+    () => sortChatMessagesChronologically(messages),
+    [messages]
+  );
+
+  // Auto-scroll to newest message at the bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+  }, [chronologicalMessages.length]);
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -118,56 +142,68 @@ export const OnlineChatPanel: React.FC<OnlineChatPanelProps> = ({
         </span>
       </div>
 
-      {/* Messages Container */}
-      <div className="flex-1 overflow-y-auto pr-1 space-y-2 flex flex-col">
-        {messages.length === 0 ? (
+      {/* Unified Chronological Messages Container (flex flex-col) */}
+      <div
+        data-testid="chat-messages-container"
+        className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2"
+      >
+        {chronologicalMessages.length === 0 ? (
           <div className="my-auto text-center px-3 py-6 text-xs font-semibold opacity-55">
             Chat privado entre os 2 jogadores da sala.
             <br />
             Envie uma saudação para começar!
           </div>
         ) : (
-          messages.map((msg) => {
-            const isMine = msg.senderId === playerId;
+          chronologicalMessages.map((msg) => {
+            // Identify sender strictly by unique player identifier (playerId)
+            const isOwnMessage = msg.senderId === playerId;
             const senderBubbleColor =
               msg.senderColor === 'red' ? redColor : blueColor;
 
             return (
               <div
                 key={msg.id}
-                className={`flex flex-col max-w-[86%] ${
-                  isMine ? 'self-end items-end' : 'self-start items-start'
+                data-testid="chat-message-row"
+                data-own={isOwnMessage ? 'true' : 'false'}
+                className={`w-full flex ${
+                  isOwnMessage ? 'justify-end' : 'justify-start'
                 }`}
               >
-                <div className="flex items-center gap-1.5 mb-0.5 px-1">
-                  <span
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: senderBubbleColor }}
-                  />
-                  <span className="text-[10px] font-black opacity-75">
-                    {isMine ? 'Você' : msg.senderName} (
-                    {msg.senderRole === 'host' ? 'Vermelho' : 'Azul'})
-                  </span>
-                  <span className="text-[9px] font-mono opacity-50">
-                    {formatTime(msg.timestamp)}
-                  </span>
-                </div>
-
                 <div
-                  className={`px-3 py-2 rounded-2xl text-xs font-bold break-words shadow-sm ${
-                    isMine
-                      ? 'text-white rounded-br-sm'
-                      : darkMode
-                      ? 'bg-[#28304C] text-slate-100 border border-[#384369] rounded-bl-sm'
-                      : 'bg-[#F5F1E8] text-slate-800 border border-[#E2D9C5] rounded-bl-sm'
+                  className={`flex flex-col max-w-[85%] ${
+                    isOwnMessage ? 'items-end' : 'items-start'
                   }`}
-                  style={
-                    isMine
-                      ? { backgroundColor: senderBubbleColor }
-                      : undefined
-                  }
                 >
-                  {msg.text}
+                  <div className="flex items-center gap-1.5 mb-0.5 px-1">
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: senderBubbleColor }}
+                    />
+                    <span className="text-[10px] font-black opacity-75">
+                      {isOwnMessage ? 'Você' : msg.senderName} (
+                      {msg.senderRole === 'host' ? 'Vermelho' : 'Azul'})
+                    </span>
+                    <span className="text-[9px] font-mono opacity-50">
+                      {formatTime(msg.timestamp)}
+                    </span>
+                  </div>
+
+                  <div
+                    className={`px-3 py-2 rounded-2xl text-xs font-bold break-words shadow-sm ${
+                      isOwnMessage
+                        ? 'text-white rounded-br-sm'
+                        : darkMode
+                        ? 'bg-[#28304C] text-slate-100 border border-[#384369] rounded-bl-sm'
+                        : 'bg-[#F5F1E8] text-slate-800 border border-[#E2D9C5] rounded-bl-sm'
+                    }`}
+                    style={
+                      isOwnMessage
+                        ? { backgroundColor: senderBubbleColor }
+                        : undefined
+                    }
+                  >
+                    {msg.text}
+                  </div>
                 </div>
               </div>
             );

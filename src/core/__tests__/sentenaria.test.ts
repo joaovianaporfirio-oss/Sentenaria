@@ -14,6 +14,7 @@ import {
   validateAndNormalizeRoomCode,
   validateChatMessage,
 } from '../../online/roomCodeUtils';
+import { sortChatMessagesChronologically } from '../../components/OnlineChatPanel';
 import { isCenterRegion, toIndex, TOTAL_CELLS } from '../constants';
 import {
   createInitialGameState,
@@ -276,6 +277,56 @@ describe('Online Room Code Validation & Generation', () => {
     expect(validateChatMessage('   ').valid).toBe(false);
     expect(validateChatMessage('x'.repeat(201)).valid).toBe(false);
   });
+
+  it('sorts interleaved chat messages from both players into a single chronological sequence without grouping by player', () => {
+    const unordered = [
+      {
+        id: 'm3',
+        senderId: 'host_uid',
+        senderName: 'Host',
+        senderRole: 'host' as const,
+        senderColor: 'red' as const,
+        text: 'Terceira mensagem (Host)',
+        timestamp: 3000,
+      },
+      {
+        id: 'm1',
+        senderId: 'host_uid',
+        senderName: 'Host',
+        senderRole: 'host' as const,
+        senderColor: 'red' as const,
+        text: 'Primeira mensagem (Host)',
+        timestamp: 1000,
+      },
+      {
+        id: 'm4',
+        senderId: 'guest_uid',
+        senderName: 'Convidado',
+        senderRole: 'guest' as const,
+        senderColor: 'blue' as const,
+        text: 'Quarta mensagem (Convidado)',
+        timestamp: 4000,
+      },
+      {
+        id: 'm2',
+        senderId: 'guest_uid',
+        senderName: 'Convidado',
+        senderRole: 'guest' as const,
+        senderColor: 'blue' as const,
+        text: 'Segunda mensagem (Convidado)',
+        timestamp: 2000,
+      },
+    ];
+
+    const sorted = sortChatMessagesChronologically(unordered);
+    expect(sorted.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4']);
+    expect(sorted.map((m) => m.senderId)).toEqual([
+      'host_uid',
+      'guest_uid',
+      'host_uid',
+      'guest_uid',
+    ]);
+  });
 });
 
 describe('Firebase Online Multiplayer Integration (Two Independent Sessions)', () => {
@@ -368,20 +419,27 @@ describe('Firebase Online Multiplayer Integration (Two Independent Sessions)', (
         expect(stateAfterMove3.turnCount).toBe(3);
         expect(stateAfterMove3.board[toIndex(3, 3)].owner).toBe('red');
 
-        // 6. Private Room Chat synchronization & outsider protection
+        // 6. Private Room Chat interleaved chronological synchronization & outsider protection
         await sendOnlineChatMessage(
           roomCode,
           hostSessionId,
           'HostJogador',
           'host',
-          'Olá, bem-vindo à partida!'
+          'Msg 1 (Host)'
         );
         await sendOnlineChatMessage(
           roomCode,
           guestSessionId,
           'GuestJogador',
           'guest',
-          'Obrigado! Boa sorte!'
+          'Msg 2 (Guest)'
+        );
+        await sendOnlineChatMessage(
+          roomCode,
+          hostSessionId,
+          'HostJogador',
+          'host',
+          'Msg 3 (Host)'
         );
 
         // Outsider cannot send messages in this room
@@ -395,18 +453,26 @@ describe('Firebase Online Multiplayer Integration (Two Independent Sessions)', (
           )
         ).rejects.toThrow(/Acesso negado/i);
 
-        // Verify participant receives the 2 chat messages while outsider receives []
+        // Verify participant receives all 3 interleaved chat messages in exact chronological sequence
         const hostMessages = await new Promise<any[]>((resolve) => {
           const unsub = subscribeToRoomChat(roomCode, hostSessionId, (msgs) => {
-            if (msgs.length >= 2) {
+            if (msgs.length >= 3) {
               unsub();
               resolve(msgs);
             }
           });
         });
-        expect(hostMessages.length).toBe(2);
-        expect(hostMessages[0].text).toBe('Olá, bem-vindo à partida!');
-        expect(hostMessages[1].text).toBe('Obrigado! Boa sorte!');
+        expect(hostMessages.length).toBe(3);
+        expect(hostMessages.map((m) => m.text)).toEqual([
+          'Msg 1 (Host)',
+          'Msg 2 (Guest)',
+          'Msg 3 (Host)',
+        ]);
+        expect(hostMessages.map((m) => m.senderId)).toEqual([
+          hostSessionId,
+          guestSessionId,
+          hostSessionId,
+        ]);
 
         const outsiderMessages = await new Promise<any[]>((resolve) => {
           const unsub = subscribeToRoomChat(
