@@ -2,7 +2,7 @@
   "name": "sentenaria",
   "private": true,
   "version": "1.0.0",
-  "homepage": "https://joaovianaporfirio-oss.github.io/Sentenaria",
+  "homepage": "https://sentenaria.com.br",
   "type": "module",
   "scripts": {
     "dev": "vite",
