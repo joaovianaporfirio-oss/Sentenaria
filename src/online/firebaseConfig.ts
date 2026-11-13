@@ -9,7 +9,7 @@ import {
 import { getDatabase } from 'firebase/database';
 
 export const firebaseConfig = {
-  apiKey: 'AIzaSyAH1fPPc3ydXZjelKHhzvpd25m8bTAha4',
+  apiKey: 'AIzaSyAH1fPPnC3ydXZjelKHhzvpd25m8bTAha4',
   authDomain: 'sentenariabase.firebaseapp.com',
   databaseURL: 'https://sentenariabase-default-rtdb.firebaseio.com',
   projectId: 'sentenariabase',
