@@ -86,9 +86,35 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   const aiTimerRef = useRef<number | null>(null);
   const prevTurnCountRef = useRef<number>(gameState.turnCount);
+  const onlineSessionRef = useRef<ActiveOnlineSession | null>(onlineSession);
+  const onUpdateGameStateRef = useRef(onUpdateGameState);
 
-  const { config, currentPlayer, scores, status, winner, moveHistory, lastMove } =
-    gameState;
+  useEffect(() => {
+    onlineSessionRef.current = onlineSession;
+  }, [onlineSession]);
+
+  useEffect(() => {
+    onUpdateGameStateRef.current = onUpdateGameState;
+  }, [onUpdateGameState]);
+
+  const isOnlineMode = Boolean(onlineSession);
+  const activeGameState =
+    isOnlineMode && onlineRoom ? onlineRoom.gameState : gameState;
+
+  const {
+    board,
+    config,
+    currentPlayer,
+    scores,
+    status,
+    winner,
+    endReason,
+    moveHistory,
+    lastMove,
+    turnCount,
+    formedTrincas,
+  } = activeGameState;
+
   const {
     darkMode,
     redColor,
@@ -98,12 +124,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     animationsEnabled,
   } = customization;
 
-  const isOnlineMode = Boolean(onlineSession);
+  const activeRoomStatus =
+    onlineRoom?.status ?? onlineSession?.roomData.status ?? 'playing';
   const isMyOnlineTurn =
     isOnlineMode &&
     status === 'playing' &&
     currentPlayer === onlineSession?.myColor &&
-    onlineRoom?.status === 'playing';
+    activeRoomStatus === 'playing';
 
   const isAITurn =
     !isOnlineMode &&
@@ -111,26 +138,35 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     config.opponentMode === 'ai' &&
     currentPlayer === config.aiPlayer;
 
-  const redHasMoved = hasRedMadeFirstMove(gameState.board);
+  const redHasMoved = hasRedMadeFirstMove(board);
 
-  // Subscribe to real-time updates when in Online Multiplayer mode
+  const roomId = onlineSession?.roomData.code ?? null;
+
+  // Subscribe to real-time updates on `rooms/{roomId}` when in Online Multiplayer mode.
+  // Depends strictly on `roomId` and uses refs to avoid stale closures.
   useEffect(() => {
-    if (!onlineSession) {
+    if (!roomId || !onlineSessionRef.current) {
       setOnlineRoom(null);
       return;
     }
 
-    const unsub = subscribeToOnlineRoom(
-      onlineSession.roomData.code,
-      onlineSession.playerId,
-      onlineSession.role,
+    const session = onlineSessionRef.current;
+    const unsubscribe = subscribeToOnlineRoom(
+      roomId,
+      session.playerId,
+      session.role,
       (updatedRoom) => {
+        // Directly update all local React states (board, current turn, match status)
         setOnlineRoom(updatedRoom);
+        setIsSubmittingMove(false);
 
         // Play audio feedback when a remote move arrives
         if (updatedRoom.gameState.turnCount > prevTurnCountRef.current) {
           const latestMove = updatedRoom.gameState.lastMove;
-          if (latestMove && latestMove.player !== onlineSession.myColor) {
+          if (
+            latestMove &&
+            latestMove.player !== onlineSessionRef.current?.myColor
+          ) {
             soundEngine.playPiecePlace(latestMove.player);
             if (latestMove.pointsEarned > 0) {
               soundEngine.playTrincaFormed(latestMove.pointsEarned);
@@ -141,22 +177,24 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           }
         }
         prevTurnCountRef.current = updatedRoom.gameState.turnCount;
-        onUpdateGameState(updatedRoom.gameState);
+        onUpdateGameStateRef.current(updatedRoom.gameState);
       },
       (errMsg) => {
         setInvalidToast(errMsg);
       }
     );
 
-    return () => unsub();
-  }, [onlineSession?.roomData.code, onlineSession?.playerId]);
+    return () => {
+      unsubscribe();
+    };
+  }, [roomId]);
 
   // Reset board inspection mode when match restarts
   useEffect(() => {
     if (status === 'playing') {
       setInspectingBoard(false);
     }
-  }, [status, gameState.turnCount]);
+  }, [status, turnCount]);
 
   // Trigger Victory / End of Match effects
   useEffect(() => {
@@ -249,12 +287,22 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
       setIsSubmittingMove(true);
       try {
-        prevTurnCountRef.current = gameState.turnCount + 1;
         const nextState = await submitOnlineMove(
           onlineSession.roomData.code,
           onlineSession.playerId,
           row,
           col
+        );
+
+        prevTurnCountRef.current = nextState.turnCount;
+        setOnlineRoom((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: nextState.status === 'finished' ? 'finished' : 'playing',
+                gameState: nextState,
+              }
+            : prev
         );
 
         soundEngine.playPiecePlace(onlineSession.myColor);
@@ -793,7 +841,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           {/* Active Turn / Last Trinca Callout Card */}
           <div className={`p-3.5 rounded-2xl border-2 ${cardSurface}`}>
             <div className="text-xs font-black uppercase tracking-wider opacity-60 mb-1 flex items-center justify-between">
-              <span>Status • Turno #{gameState.turnCount + 1}</span>
+              <span>Status • Turno #{turnCount + 1}</span>
               {isOnlineMode && onlineSession && (
                 <span className="flex items-center gap-1 text-emerald-500">
                   <Wifi className="w-3 h-3" />
@@ -880,9 +928,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         {/* Center Column: 9x9 Sentenaria Board */}
         <div className="lg:col-span-6 flex flex-col items-center justify-center">
           <BoardView
-            board={gameState.board}
+            board={board}
             currentPlayer={currentPlayer}
-            formedTrincas={gameState.formedTrincas}
+            formedTrincas={formedTrincas}
             lastMove={lastMove}
             customization={customization}
             disabled={
@@ -1037,9 +1085,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             </h2>
 
             <p className="mt-1 text-xs sm:text-sm font-bold opacity-75">
-              {gameState.endReason === 'target_score_reached'
+              {endReason === 'target_score_reached'
                 ? 'Objetivo de 8 trincas alcançado com sucesso!'
-                : gameState.endReason === 'board_full'
+                : endReason === 'board_full'
                 ? 'Todas as 81 casas do tabuleiro foram preenchidas!'
                 : 'Partida encerrada: não restam mais jogadas válidas para o turno.'}
             </p>
@@ -1096,7 +1144,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             </div>
 
             <div className="text-xs font-bold opacity-70 mb-5 flex justify-center gap-4">
-              <span>Total de Turnos: {gameState.turnCount}</span>
+              <span>Total de Turnos: {turnCount}</span>
               <span>•</span>
               <span>
                 Modo:{' '}

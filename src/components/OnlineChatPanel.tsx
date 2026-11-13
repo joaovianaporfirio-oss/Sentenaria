@@ -48,24 +48,35 @@ export const OnlineChatPanel: React.FC<OnlineChatPanelProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const prevCountRef = useRef<number>(0);
+  const playerIdRef = useRef<string>(playerId);
+
+  useEffect(() => {
+    playerIdRef.current = playerId;
+  }, [playerId]);
 
   const { darkMode, redColor, blueColor, accentColor } = customization;
 
   useEffect(() => {
-    const unsubscribe = subscribeToRoomChat(roomCode, playerId, (list) => {
-      const ordered = sortChatMessagesChronologically(list);
-      if (ordered.length > prevCountRef.current && prevCountRef.current > 0) {
-        const newest = ordered[ordered.length - 1];
-        if (newest && newest.senderId !== playerId) {
-          soundEngine.playMenuClick();
+    const unsubscribe = subscribeToRoomChat(
+      roomCode,
+      playerIdRef.current,
+      (list) => {
+        const ordered = sortChatMessagesChronologically(list);
+        if (ordered.length > prevCountRef.current && prevCountRef.current > 0) {
+          const newest = ordered[ordered.length - 1];
+          if (newest && newest.senderId !== playerIdRef.current) {
+            soundEngine.playMenuClick();
+          }
         }
+        prevCountRef.current = ordered.length;
+        setMessages(ordered);
       }
-      prevCountRef.current = ordered.length;
-      setMessages(ordered);
-    });
+    );
 
-    return () => unsubscribe();
-  }, [roomCode, playerId]);
+    return () => {
+      unsubscribe();
+    };
+  }, [roomCode]);
 
   // Single unified array of messages from both players, sorted oldest -> newest
   const chronologicalMessages = useMemo(

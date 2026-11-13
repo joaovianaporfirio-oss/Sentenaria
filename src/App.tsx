@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { soundEngine } from './audio/soundEngine';
 import { CustomizerModal } from './components/CustomizerModal';
 import { ActiveOnlineSession, GameScreen } from './components/GameScreen';
@@ -13,6 +13,7 @@ import {
   GameConfig,
   GameState,
 } from './core/types';
+import { ensurePlayerIdentity } from './online/firebaseConfig';
 import {
   DEFAULT_STATS,
   loadAudioSettings,
@@ -34,6 +35,7 @@ export const App: React.FC = () => {
   const [modal, setModal] = useState<ActiveModal>('none');
   const [onlineSession, setOnlineSession] =
     useState<ActiveOnlineSession | null>(null);
+  const [authenticatedUid, setAuthenticatedUid] = useState<string>('');
 
   const [config, setConfig] = useState<GameConfig>(() => loadGameConfig());
   const [customization, setCustomization] = useState<CustomizationSettings>(
@@ -47,6 +49,19 @@ export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() =>
     createInitialGameState(loadGameConfig())
   );
+
+  // Authenticate anonymously with Firebase Auth as soon as the app opens
+  useEffect(() => {
+    let active = true;
+    ensurePlayerIdentity().then((res) => {
+      if (active) {
+        setAuthenticatedUid(res.uid);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Sync dark mode class on root html element & persist customization
   useEffect(() => {
@@ -97,46 +112,50 @@ export const App: React.FC = () => {
     setGameState(freshState);
   };
 
-  const handleUpdateGameState = (nextState: GameState) => {
-    // Update persistent stats if new trincas were formed or match ended
-    const newTrincas = nextState.lastMove?.pointsEarned ?? 0;
-    const justFinished =
-      gameState.status === 'playing' && nextState.status === 'finished';
+  const handleUpdateGameState = useCallback((nextState: GameState) => {
+    setGameState((prevGameState) => {
+      const turnAdvanced = nextState.turnCount > prevGameState.turnCount;
+      const newTrincas = turnAdvanced
+        ? (nextState.lastMove?.pointsEarned ?? 0)
+        : 0;
+      const justFinished =
+        prevGameState.status === 'playing' && nextState.status === 'finished';
 
-    if (newTrincas > 0 || justFinished) {
-      setStats((prev) => {
-        const updated: PlayerStats = {
-          ...prev,
-          totalTrincasFormed: prev.totalTrincasFormed + newTrincas,
-          matchesPlayed: justFinished
-            ? prev.matchesPlayed + 1
-            : prev.matchesPlayed,
-          redWins:
-            justFinished && nextState.winner === 'red'
-              ? prev.redWins + 1
-              : prev.redWins,
-          blueWins:
-            justFinished && nextState.winner === 'blue'
-              ? prev.blueWins + 1
-              : prev.blueWins,
-          draws:
-            justFinished && nextState.winner === 'draw'
-              ? prev.draws + 1
-              : prev.draws,
-          aiWins:
-            justFinished &&
-            nextState.config.opponentMode === 'ai' &&
-            nextState.winner === nextState.config.aiPlayer
-              ? prev.aiWins + 1
-              : prev.aiWins,
-        };
-        savePlayerStats(updated);
-        return updated;
-      });
-    }
+      if (newTrincas > 0 || justFinished) {
+        setStats((prev) => {
+          const updated: PlayerStats = {
+            ...prev,
+            totalTrincasFormed: prev.totalTrincasFormed + newTrincas,
+            matchesPlayed: justFinished
+              ? prev.matchesPlayed + 1
+              : prev.matchesPlayed,
+            redWins:
+              justFinished && nextState.winner === 'red'
+                ? prev.redWins + 1
+                : prev.redWins,
+            blueWins:
+              justFinished && nextState.winner === 'blue'
+                ? prev.blueWins + 1
+                : prev.blueWins,
+            draws:
+              justFinished && nextState.winner === 'draw'
+                ? prev.draws + 1
+                : prev.draws,
+            aiWins:
+              justFinished &&
+              nextState.config.opponentMode === 'ai' &&
+              nextState.winner === nextState.config.aiPlayer
+                ? prev.aiWins + 1
+                : prev.aiWins,
+          };
+          savePlayerStats(updated);
+          return updated;
+        });
+      }
 
-    setGameState(nextState);
-  };
+      return nextState;
+    });
+  }, []);
 
   const handleToggleDarkMode = () => {
     setCustomization((prev) => ({

@@ -25,7 +25,7 @@ import {
   MoveRecord,
   Player,
 } from '../core/types';
-import { db } from './firebaseConfig';
+import { db, ensurePlayerIdentity } from './firebaseConfig';
 import {
   generateRoomCode,
   validateAndNormalizeRoomCode,
@@ -126,6 +126,17 @@ interface SerializedGameState {
   config: GameConfig;
 }
 
+function normalizeFirebaseArray<T>(raw: unknown): T[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw as T[];
+  if (typeof raw === 'object') {
+    return Object.keys(raw as Record<string, T>)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((k) => (raw as Record<string, T>)[k]);
+  }
+  return [];
+}
+
 function serializeTrinca(t: FormedTrinca): SerializedTrinca {
   return {
     id: t.id,
@@ -139,11 +150,19 @@ function serializeTrinca(t: FormedTrinca): SerializedTrinca {
 }
 
 function deserializeTrinca(raw: SerializedTrinca): FormedTrinca {
+  const indicesArr = normalizeFirebaseArray<number>(raw.indices);
+  const coordsArr = normalizeFirebaseArray<{ row: number; col: number }>(
+    raw.coords
+  );
   return {
     id: raw.id,
     player: raw.player,
-    indices: [raw.indices[0], raw.indices[1], raw.indices[2]],
-    coords: [raw.coords[0], raw.coords[1], raw.coords[2]],
+    indices: [indicesArr[0] ?? 0, indicesArr[1] ?? 0, indicesArr[2] ?? 0],
+    coords: [
+      coordsArr[0] ?? { row: 0, col: 0 },
+      coordsArr[1] ?? { row: 0, col: 0 },
+      coordsArr[2] ?? { row: 0, col: 0 },
+    ],
     direction: raw.direction,
     formedAtTurn: raw.formedAtTurn,
     reusedCellIndex: raw.reusedCellIndex === -1 ? null : raw.reusedCellIndex,
@@ -165,15 +184,16 @@ function serializeMove(m: MoveRecord): SerializedMoveRecord {
 }
 
 function deserializeMove(raw: SerializedMoveRecord): MoveRecord {
+  const trincasRaw = normalizeFirebaseArray<SerializedTrinca>(
+    raw.trincasFormed
+  );
   return {
     turnNumber: raw.turnNumber,
     player: raw.player,
     row: raw.row,
     col: raw.col,
     index: raw.index,
-    trincasFormed: Array.isArray(raw.trincasFormed)
-      ? raw.trincasFormed.map(deserializeTrinca)
-      : [],
+    trincasFormed: trincasRaw.map(deserializeTrinca),
     pointsEarned: raw.pointsEarned ?? 0,
     scoreAfter: raw.scoreAfter ?? { red: 0, blue: 0 },
     timestamp: raw.timestamp ?? Date.now(),
@@ -218,7 +238,7 @@ export function deserializeGameStateFromFirebase(
   }
 
   const fallbackBoard = createInitialBoard();
-  const rawBoard = Array.isArray(raw.board) ? raw.board : [];
+  const rawBoard = normalizeFirebaseArray<SerializedCell>(raw.board);
   const board: CellState[] = fallbackBoard.map((defaultCell, i) => {
     const rc = rawBoard[i];
     if (!rc) return defaultCell;
@@ -236,9 +256,9 @@ export function deserializeGameStateFromFirebase(
     };
   });
 
-  const formedTrincas: FormedTrinca[] = Array.isArray(raw.formedTrincas)
-    ? raw.formedTrincas.map(deserializeTrinca)
-    : [];
+  const formedTrincas: FormedTrinca[] = normalizeFirebaseArray<SerializedTrinca>(
+    raw.formedTrincas
+  ).map(deserializeTrinca);
 
   const formedTrincaIds: Record<string, boolean> = {};
   if (raw.formedTrincaIds && typeof raw.formedTrincaIds === 'object') {
@@ -252,9 +272,9 @@ export function deserializeGameStateFromFirebase(
     formedTrincaIds[t.id] = true;
   }
 
-  const moveHistory: MoveRecord[] = Array.isArray(raw.moveHistory)
-    ? raw.moveHistory.map(deserializeMove)
-    : [];
+  const moveHistory: MoveRecord[] = normalizeFirebaseArray<SerializedMoveRecord>(
+    raw.moveHistory
+  ).map(deserializeMove);
 
   const lastMove: MoveRecord | null =
     raw.lastMove && raw.lastMove !== 'none'
@@ -296,10 +316,29 @@ export function deserializeGameStateFromFirebase(
 function deserializeRoomData(raw: Record<string, any>): OnlineRoomData {
   const hostRaw = raw.players?.host;
   const guestRaw = raw.players?.guest;
+  const gameState = deserializeGameStateFromFirebase(raw.gameState);
+
+  // Ensure currentTurn at room root and gameState.currentPlayer stay strictly synchronized
+  if (raw.currentTurn === 'red' || raw.currentTurn === 'blue') {
+    gameState.currentPlayer = raw.currentTurn;
+  }
+
+  const hasGuest =
+    Boolean(raw.guestId && String(raw.guestId).trim() !== '') ||
+    Boolean(guestRaw && guestRaw !== 'none' && guestRaw.id);
+
+  const normalizedStatus: OnlineRoomStatus =
+    raw.status === 'abandoned'
+      ? 'abandoned'
+      : gameState.status === 'finished' || raw.status === 'finished'
+      ? 'finished'
+      : hasGuest
+      ? 'playing'
+      : (raw.status as OnlineRoomStatus) ?? 'waiting';
 
   return {
     code: String(raw.code ?? ''),
-    status: (raw.status as OnlineRoomStatus) ?? 'waiting',
+    status: normalizedStatus,
     createdAt: Number(raw.createdAt ?? Date.now()),
     updatedAt: Number(raw.updatedAt ?? Date.now()),
     hostId: String(raw.hostId ?? ''),
@@ -327,7 +366,7 @@ function deserializeRoomData(raw: Record<string, any>): OnlineRoomData {
             }
           : null,
     },
-    gameState: deserializeGameStateFromFirebase(raw.gameState),
+    gameState,
   };
 }
 
@@ -388,6 +427,9 @@ export async function createOnlineRoom(
   hostName: string,
   config: Partial<GameConfig>
 ): Promise<{ roomData: OnlineRoomData; role: OnlineRole; myColor: Player }> {
+  const identity = await ensurePlayerIdentity();
+  const effectiveHostId =
+    hostId && hostId.trim() !== '' ? hostId.trim() : identity.uid;
   const cleanName = hostName.trim() || 'Host (Vermelho)';
   const initialGameState = createInitialGameState({
     ...config,
@@ -397,18 +439,23 @@ export async function createOnlineRoom(
   for (let attempt = 0; attempt < 6; attempt++) {
     const candidateCode = generateRoomCode();
     const roomRef = ref(db, `rooms/${candidateCode}`);
-    const now = Date.now();
+    const existingSnap = await get(roomRef);
+    if (existingSnap.exists()) {
+      continue;
+    }
 
+    const now = Date.now();
     const newRoomPayload = {
       code: candidateCode,
       status: 'waiting',
+      currentTurn: 'red',
       createdAt: now,
       updatedAt: now,
-      hostId,
+      hostId: effectiveHostId,
       guestId: '',
       players: {
         host: {
-          id: hostId,
+          id: effectiveHostId,
           name: cleanName,
           color: 'red',
           role: 'host',
@@ -421,19 +468,13 @@ export async function createOnlineRoom(
       gameState: serializeGameStateForFirebase(initialGameState),
     };
 
-    const txResult = await runTransaction(roomRef, (currentData) => {
-      if (currentData !== null) {
-        // Collision with an existing room code; abort and try another code
-        return;
-      }
-      return newRoomPayload;
-    });
-
-    if (txResult.committed && txResult.snapshot.exists()) {
-      const roomData = deserializeRoomData(txResult.snapshot.val());
+    await set(roomRef, newRoomPayload);
+    const verifySnap = await get(roomRef);
+    if (verifySnap.exists()) {
+      const roomData = deserializeRoomData(verifySnap.val());
       saveActiveRoomSession({
         roomCode: candidateCode,
-        playerId: hostId,
+        playerId: effectiveHostId,
         playerName: cleanName,
         role: 'host',
         myColor: 'red',
@@ -469,6 +510,10 @@ export async function joinOnlineRoom(
     throw new Error(validation.error || 'Código de sala inválido.');
   }
 
+  const identity = await ensurePlayerIdentity();
+  const resolvedPlayerId =
+    playerId && playerId.trim() !== '' ? playerId.trim() : identity.uid;
+
   const code = validation.normalizedCode;
   const cleanName = playerName.trim() || 'Convidado (Azul)';
   const roomRef = ref(db, `rooms/${code}`);
@@ -488,9 +533,9 @@ export async function joinOnlineRoom(
     initialRoomVal &&
     initialRoomVal.status === 'waiting' &&
     (!initialRoomVal.guestId || initialRoomVal.guestId === '') &&
-    initialRoomVal.hostId === playerId
-      ? `${playerId}_guest_${Math.random().toString(36).slice(2, 6)}`
-      : playerId;
+    initialRoomVal.hostId === resolvedPlayerId
+      ? `${resolvedPlayerId}_guest_${Math.random().toString(36).slice(2, 6)}`
+      : resolvedPlayerId;
 
   let abortReason: 'NOT_FOUND' | 'ABANDONED' | 'FULL' | null = null;
   let assignedRole = 'guest' as OnlineRole;
@@ -617,14 +662,9 @@ export async function joinOnlineRoom(
 
 /**
  * Authoritatively validates and executes a move in an online room using an atomic
- * Firebase Realtime Database transaction (`runTransaction`).
- *
- * Guarantees:
- * - Only registered participants (Host = 'red', Guest = 'blue') can submit moves.
- * - Both players must have joined (`status === 'playing'`).
- * - A player cannot move on the opponent's turn or submit two moves simultaneously.
- * - Full Sentenaria rules (including Red's 1st-move center restriction and 2nd-move center freedom)
- *   are validated against the authoritative server state before committing.
+ * `update()` on `rooms/{roomId}` that updates both the board (`gameState`) and the turn
+ * (`currentTurn` and `gameState.currentPlayer`) in a single atomic operation without
+ * overwriting concurrent chat messages or player presence heartbeats.
  */
 export async function submitOnlineMove(
   roomCode: string,
@@ -632,103 +672,108 @@ export async function submitOnlineMove(
   row: number,
   col: number
 ): Promise<GameState> {
+  await ensurePlayerIdentity();
   const code = roomCode.toUpperCase();
   const roomRef = ref(db, `rooms/${code}`);
 
-  let validationError: string | null = null;
+  const snap = await get(roomRef);
+  if (!snap.exists()) {
+    throw new Error('Sala não encontrada.');
+  }
 
-  const txResult = await runTransaction(roomRef, (current) => {
-    if (current === null) {
-      return current;
-    }
-
-    validationError = null;
-
-    if (current.status !== 'playing') {
-      validationError =
-        'A partida ainda não está em andamento (aguardando ambos os jogadores).';
-      return;
-    }
-
-    // Verify participant identity & assigned piece color
-    let callerColor: Player | null = null;
-    if (current.hostId === playerId) {
-      callerColor = 'red';
-    } else if (current.guestId === playerId) {
-      callerColor = 'blue';
-    } else {
-      validationError = 'Acesso negado: você não é participante desta sala.';
-      return;
-    }
-
-    const authoritativeState = deserializeGameStateFromFirebase(
-      current.gameState
+  const current = snap.val();
+  const hasGuest =
+    Boolean(current.guestId && String(current.guestId).trim() !== '') ||
+    Boolean(
+      current.players?.guest &&
+        current.players.guest !== 'none' &&
+        current.players.guest.id
     );
 
-    if (authoritativeState.status !== 'playing') {
-      validationError = 'A partida já foi finalizada.';
-      return;
-    }
+  if (current.status !== 'playing' && !hasGuest) {
+    throw new Error(
+      'A partida ainda não está em andamento (aguardando ambos os jogadores).'
+    );
+  }
 
-    if (authoritativeState.currentPlayer !== callerColor) {
-      validationError = 'Aguarde a sua vez de jogar!';
-      return;
-    }
+  // Verify participant identity & assigned piece color
+  let callerColor: Player | null = null;
+  if (current.hostId === playerId) {
+    callerColor = 'red';
+  } else if (current.guestId === playerId) {
+    callerColor = 'blue';
+  } else {
+    throw new Error('Acesso negado: você não é participante desta sala.');
+  }
 
-    if (!isValidMove(authoritativeState.board, row, col, callerColor)) {
-      validationError =
-        'Jogada inválida segundo as regras do Sentenaria.';
-      return;
-    }
+  const authoritativeState = deserializeGameStateFromFirebase(
+    current.gameState
+  );
+  if (current.currentTurn === 'red' || current.currentTurn === 'blue') {
+    authoritativeState.currentPlayer = current.currentTurn;
+  }
 
-    const nextGameState = makeMove(authoritativeState, row, col);
-    current.gameState = serializeGameStateForFirebase(nextGameState);
-    current.updatedAt = Date.now();
+  if (authoritativeState.status !== 'playing') {
+    throw new Error('A partida já foi finalizada.');
+  }
 
-    if (nextGameState.status === 'finished') {
-      current.status = 'finished';
-    }
+  if (authoritativeState.currentPlayer !== callerColor) {
+    throw new Error('Aguarde a sua vez de jogar!');
+  }
 
-    return current;
+  if (!isValidMove(authoritativeState.board, row, col, callerColor)) {
+    throw new Error('Jogada inválida segundo as regras do Sentenaria.');
+  }
+
+  const nextGameState = makeMove(authoritativeState, row, col);
+  const serializedNextState = serializeGameStateForFirebase(nextGameState);
+  const nextStatus: OnlineRoomStatus =
+    nextGameState.status === 'finished' ? 'finished' : 'playing';
+
+  // Atomic multi-field update: updates board, currentTurn, and match status together
+  await update(roomRef, {
+    gameState: serializedNextState,
+    currentTurn: nextGameState.currentPlayer,
+    status: nextStatus,
+    updatedAt: Date.now(),
   });
 
-  if (validationError) {
-    throw new Error(validationError);
-  }
-
-  if (!txResult.committed || !txResult.snapshot.exists()) {
-    throw new Error('Não foi possível sincronizar a jogada. Tente novamente.');
-  }
-
-  const updatedRoom = deserializeRoomData(txResult.snapshot.val());
-  return updatedRoom.gameState;
+  return nextGameState;
 }
 
 /**
- * Resets the board for a rematch inside the same online room while keeping both players.
+ * Resets the board for a rematch inside the same online room while keeping both players
+ * and preserving all chat messages.
  */
 export async function restartOnlineMatch(
   roomCode: string,
   playerId: string
 ): Promise<void> {
+  await ensurePlayerIdentity();
   const code = roomCode.toUpperCase();
   const roomRef = ref(db, `rooms/${code}`);
 
-  await runTransaction(roomRef, (current) => {
-    if (current === null) return current;
-    if (current.hostId !== playerId && current.guestId !== playerId) {
-      return; // Unauthorized
-    }
-    const existingState = deserializeGameStateFromFirebase(current.gameState);
-    const freshState = createInitialGameState({
-      ...existingState.config,
-      opponentMode: 'online',
-    });
-    current.gameState = serializeGameStateForFirebase(freshState);
-    current.status =
-      current.guestId && current.guestId !== '' ? 'playing' : 'waiting';
-    current.updatedAt = Date.now();
-    return current;
+  const snap = await get(roomRef);
+  if (!snap.exists()) return;
+
+  const current = snap.val();
+  if (current.hostId !== playerId && current.guestId !== playerId) {
+    return; // Unauthorized
+  }
+
+  const existingState = deserializeGameStateFromFirebase(current.gameState);
+  const freshState = createInitialGameState({
+    ...existingState.config,
+    opponentMode: 'online',
+  });
+  const nextStatus: OnlineRoomStatus =
+    current.guestId && current.guestId !== '' ? 'playing' : 'waiting';
+
+  await update(roomRef, {
+    gameState: serializeGameStateForFirebase(freshState),
+    currentTurn: 'red',
+    status: nextStatus,
+    updatedAt: Date.now(),
   });
 }
 
@@ -755,12 +800,12 @@ export async function leaveOnlineRoom(
 }
 
 /**
- * Subscribes to real-time updates of a room and manages presence (connection / disconnection)
+ * Subscribes to real-time updates of `rooms/{roomId}` and manages presence (connection / disconnection)
  * for the active participant.
  */
 export function subscribeToOnlineRoom(
   roomCode: string,
-  playerId: string,
+  _playerId: string,
   role: OnlineRole,
   onRoomChange: (room: OnlineRoomData) => void,
   onRoomError?: (errMessage: string) => void
@@ -770,7 +815,7 @@ export function subscribeToOnlineRoom(
   const playerRef = ref(db, `rooms/${code}/players/${role}`);
   const connectedInfoRef = ref(db, '.info/connected');
 
-  // 1. Listen to room state changes
+  // 1. Listen to room state changes directly from `rooms/{roomId}`
   const unsubRoom = onValue(
     roomRef,
     (snapshot) => {
@@ -779,10 +824,6 @@ export function subscribeToOnlineRoom(
         return;
       }
       const raw = snapshot.val();
-      if (raw.hostId !== playerId && raw.guestId && raw.guestId !== playerId) {
-        onRoomError?.('Acesso não autorizado a esta sala.');
-        return;
-      }
       onRoomChange(deserializeRoomData(raw));
     },
     (err) => {
@@ -834,7 +875,8 @@ export function subscribeToOnlineRoom(
 // ============================================================================
 
 /**
- * Sends a real-time chat message inside a private room after verifying membership and message length.
+ * Sends a real-time chat message inside `rooms/{roomId}/messages` using `push()`
+ * to generate a unique key per message and `serverTimestamp()` for chronological ordering.
  */
 export async function sendOnlineChatMessage(
   roomCode: string,
@@ -843,6 +885,7 @@ export async function sendOnlineChatMessage(
   senderRole: OnlineRole,
   rawText: string
 ): Promise<void> {
+  await ensurePlayerIdentity();
   const validation = validateChatMessage(rawText);
   if (!validation.valid) {
     throw new Error(validation.error || 'Mensagem inválida.');
@@ -869,23 +912,22 @@ export async function sendOnlineChatMessage(
   const newMsgRef = push(messagesListRef);
 
   const payload = {
-    id: newMsgRef.key || `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     senderId,
-    senderName: senderName.trim() || (actualRole === 'host' ? 'Host' : 'Convidado'),
+    senderName:
+      senderName.trim() || (actualRole === 'host' ? 'Host' : 'Convidado'),
     senderRole: actualRole,
     senderColor,
     text: validation.sanitized,
     timestamp: serverTimestamp(),
-    clientTimestamp: Date.now(),
   };
 
   await set(newMsgRef, payload);
 }
 
 /**
- * Subscribes to the private chat messages of a room in real time.
- * Verifies that `playerId` is a registered participant of the room before delivering messages.
- * Returns a single chronologically ordered array (oldest to newest) containing messages from both players.
+ * Subscribes to the private chat messages of a room in real time (`rooms/{roomId}/messages`).
+ * Converts the Firebase snapshot object into an array and sorts strictly by `timestamp` in
+ * ascending order (oldest to newest) with unique Firebase push keys.
  */
 export function subscribeToRoomChat(
   roomCode: string,
@@ -901,7 +943,13 @@ export function subscribeToRoomChat(
       return;
     }
     const roomVal = snap.val();
-    if (roomVal.hostId !== playerId && roomVal.guestId !== playerId) {
+    if (
+      playerId &&
+      roomVal.hostId &&
+      roomVal.guestId &&
+      roomVal.hostId !== playerId &&
+      roomVal.guestId !== playerId
+    ) {
       // Prevent third parties from reading room messages
       onMessagesChange([]);
       return;
@@ -917,20 +965,24 @@ export function subscribeToRoomChat(
       .filter((entry): entry is [string, Record<string, any>] =>
         Boolean(entry[1] && typeof entry[1] === 'object')
       )
-      .map(([key, m]) => ({
-        id: String(m.id || key),
-        senderId: String(m.senderId || ''),
-        senderName: String(m.senderName || 'Jogador'),
-        senderRole: (m.senderRole === 'host' ? 'host' : 'guest') as OnlineRole,
-        senderColor: (m.senderColor === 'red' ? 'red' : 'blue') as Player,
-        text: String(m.text || ''),
-        timestamp:
+      .map(([key, m]) => {
+        const numericTimestamp =
           typeof m.timestamp === 'number'
             ? m.timestamp
             : typeof m.clientTimestamp === 'number'
             ? m.clientTimestamp
-            : 0,
-      }))
+            : Number(m.timestamp) || 0;
+
+        return {
+          id: key,
+          senderId: String(m.senderId || ''),
+          senderName: String(m.senderName || 'Jogador'),
+          senderRole: (m.senderRole === 'host' ? 'host' : 'guest') as OnlineRole,
+          senderColor: (m.senderColor === 'red' ? 'red' : 'blue') as Player,
+          text: String(m.text || ''),
+          timestamp: numericTimestamp,
+        };
+      })
       .sort((a, b) => {
         if (a.timestamp !== b.timestamp) {
           return a.timestamp - b.timestamp;

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -76,6 +76,22 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
   const { darkMode, redColor, blueColor, accentColor, symbolStyle } =
     customization;
 
+  const playerIdRef = useRef<string>(playerId);
+  const nicknameRef = useRef<string>(nickname);
+  const onEnterOnlineMatchRef = useRef(onEnterOnlineMatch);
+
+  useEffect(() => {
+    playerIdRef.current = playerId;
+  }, [playerId]);
+
+  useEffect(() => {
+    nicknameRef.current = nickname;
+  }, [nickname]);
+
+  useEffect(() => {
+    onEnterOnlineMatchRef.current = onEnterOnlineMatch;
+  }, [onEnterOnlineMatch]);
+
   useEffect(() => {
     let mounted = true;
     ensurePlayerIdentity().then((res) => {
@@ -88,13 +104,17 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
     };
   }, []);
 
-  // When Host is in the waiting room, subscribe to room changes and launch match as soon as Guest joins
-  useEffect(() => {
-    if (!waitingRoom || !playerId) return;
+  const waitingRoomId = waitingRoom?.code ?? null;
 
-    const unsub = subscribeToOnlineRoom(
-      waitingRoom.code,
-      playerId,
+  // When Host is in the waiting room, subscribe to `rooms/{roomId}` changes and launch match as soon as Guest joins.
+  // Depends only on `waitingRoomId` (`roomId`) with proper cleanup.
+  useEffect(() => {
+    if (!waitingRoomId) return;
+
+    const activeHostId = playerIdRef.current || waitingRoom?.hostId || '';
+    const unsubscribe = subscribeToOnlineRoom(
+      waitingRoomId,
+      activeHostId,
       'host',
       (updatedRoom) => {
         setWaitingRoom(updatedRoom);
@@ -104,10 +124,10 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
           updatedRoom.guestId
         ) {
           soundEngine.playTrincaFormed(1);
-          const cleanName = nickname.trim() || 'Host (Vermelho)';
-          onEnterOnlineMatch({
+          const cleanName = nicknameRef.current.trim() || 'Host (Vermelho)';
+          onEnterOnlineMatchRef.current({
             roomData: updatedRoom,
-            playerId,
+            playerId: updatedRoom.hostId || activeHostId,
             playerName: cleanName,
             role: 'host',
             myColor: 'red',
@@ -119,11 +139,13 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
       }
     );
 
-    return () => unsub();
-  }, [waitingRoom?.code, playerId]);
+    return () => {
+      unsubscribe();
+    };
+  }, [waitingRoomId]);
 
   const handleCreateRoom = async () => {
-    if (!playerId || loading) return;
+    if (loading) return;
     setErrorMessage(null);
     setLoading(true);
 
@@ -131,7 +153,11 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
     savePlayerNickname(finalName);
 
     try {
-      const created = await createOnlineRoom(playerId, finalName, config);
+      const resolvedUid = playerId || (await ensurePlayerIdentity()).uid;
+      if (!playerId) {
+        setPlayerId(resolvedUid);
+      }
+      const created = await createOnlineRoom(resolvedUid, finalName, config);
       soundEngine.playMenuClick();
       setWaitingRoom(created.roomData);
     } catch (err: any) {
@@ -146,7 +172,7 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
 
   const handleJoinRoom = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!playerId || loading) return;
+    if (loading) return;
 
     setErrorMessage(null);
 
@@ -162,9 +188,13 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
     savePlayerNickname(finalName);
 
     try {
+      const resolvedUid = playerId || (await ensurePlayerIdentity()).uid;
+      if (!playerId) {
+        setPlayerId(resolvedUid);
+      }
       const joined = await joinOnlineRoom(
         validation.normalizedCode,
-        playerId,
+        resolvedUid,
         finalName
       );
       soundEngine.playTrincaFormed(1);

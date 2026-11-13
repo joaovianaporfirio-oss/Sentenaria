@@ -1,6 +1,11 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAnalytics, isSupported } from 'firebase/analytics';
-import { getAuth, signInAnonymously } from 'firebase/auth';
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInAnonymously,
+  type User,
+} from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
 
 export const firebaseConfig = {
@@ -14,7 +19,8 @@ export const firebaseConfig = {
   measurementId: 'G-VPVMMTWGEQ',
 };
 
-export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+export const app =
+  getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
 // Initialize Analytics only in browser environments that support it
 export const analyticsPromise =
@@ -24,13 +30,23 @@ export const analyticsPromise =
         .catch(() => null)
     : Promise.resolve(null);
 
+export const auth = getAuth(app);
 export const db = getDatabase(app);
 
 const SESSION_PLAYER_ID_KEY = 'sentenaria_online_player_id_v1';
 const SESSION_PLAYER_NAME_KEY = 'sentenaria_online_player_name_v1';
 
+let cachedIdentity: { uid: string; isFirebaseAuth: boolean } | null = null;
+let pendingIdentityPromise: Promise<{
+  uid: string;
+  isFirebaseAuth: boolean;
+}> | null = null;
+
 function generateRandomId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
     return 'p_' + crypto.randomUUID().replace(/-/g, '');
   }
   return (
@@ -40,43 +56,114 @@ function generateRandomId(): string {
   );
 }
 
-/**
- * Obtains an authenticated player UID.
- * Attempts Firebase Anonymous Authentication first; if Firebase Auth is not yet enabled
- * on the Firebase Console, falls back to a persistent cryptographic session UID so
- * each browser session has a unique, consistent identity across reloads and reconnections.
- */
-export async function ensurePlayerIdentity(): Promise<{
-  uid: string;
-  isFirebaseAuth: boolean;
-}> {
+function getOrCreateFallbackSessionId(): string {
   if (typeof window !== 'undefined') {
-    try {
-      const auth = getAuth(app);
-      if (auth.currentUser) {
-        return { uid: auth.currentUser.uid, isFirebaseAuth: true };
-      }
-      const cred = await signInAnonymously(auth);
-      if (cred.user?.uid) {
-        return { uid: cred.user.uid, isFirebaseAuth: true };
-      }
-    } catch {
-      // Fallback to session-scoped unique player ID when Anonymous Auth is not enabled in Console
-    }
-
     try {
       let existing = sessionStorage.getItem(SESSION_PLAYER_ID_KEY);
       if (!existing) {
         existing = generateRandomId();
         sessionStorage.setItem(SESSION_PLAYER_ID_KEY, existing);
       }
-      return { uid: existing, isFirebaseAuth: false };
+      return existing;
     } catch {
-      return { uid: generateRandomId(), isFirebaseAuth: false };
+      return generateRandomId();
     }
   }
+  return generateRandomId();
+}
 
-  return { uid: generateRandomId(), isFirebaseAuth: false };
+function saveSessionPlayerId(uid: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(SESSION_PLAYER_ID_KEY, uid);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+/**
+ * Waits for Firebase Auth's initial state via `onAuthStateChanged`, or signs in
+ * anonymously with `signInAnonymously(auth)` if no user is currently signed in.
+ * Falls back to a persistent sessionStorage UID if Anonymous Auth is restricted.
+ */
+export function ensurePlayerIdentity(): Promise<{
+  uid: string;
+  isFirebaseAuth: boolean;
+}> {
+  if (cachedIdentity) {
+    return Promise.resolve(cachedIdentity);
+  }
+
+  if (pendingIdentityPromise) {
+    return pendingIdentityPromise;
+  }
+
+  pendingIdentityPromise = new Promise<{
+    uid: string;
+    isFirebaseAuth: boolean;
+  }>((resolve) => {
+    if (auth.currentUser?.uid) {
+      const resolved = { uid: auth.currentUser.uid, isFirebaseAuth: true };
+      cachedIdentity = resolved;
+      saveSessionPlayerId(resolved.uid);
+      resolve(resolved);
+      return;
+    }
+
+    let settled = false;
+    const finish = (result: { uid: string; isFirebaseAuth: boolean }) => {
+      if (settled) return;
+      settled = true;
+      cachedIdentity = result;
+      saveSessionPlayerId(result.uid);
+      resolve(result);
+    };
+
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      async (user: User | null) => {
+        unsubscribe();
+        if (user?.uid) {
+          finish({ uid: user.uid, isFirebaseAuth: true });
+          return;
+        }
+        try {
+          const cred = await signInAnonymously(auth);
+          if (cred.user?.uid) {
+            finish({ uid: cred.user.uid, isFirebaseAuth: true });
+            return;
+          }
+        } catch {
+          // Fallback to session-scoped unique player ID when Anonymous Auth is not enabled in Console
+        }
+        finish({
+          uid: getOrCreateFallbackSessionId(),
+          isFirebaseAuth: false,
+        });
+      },
+      () => {
+        unsubscribe();
+        finish({
+          uid: getOrCreateFallbackSessionId(),
+          isFirebaseAuth: false,
+        });
+      }
+    );
+  }).finally(() => {
+    pendingIdentityPromise = null;
+  });
+
+  return pendingIdentityPromise;
+}
+
+export function getCurrentPlayerUidSync(): string {
+  if (auth.currentUser?.uid) {
+    return auth.currentUser.uid;
+  }
+  if (cachedIdentity?.uid) {
+    return cachedIdentity.uid;
+  }
+  return getOrCreateFallbackSessionId();
 }
 
 export function getSavedPlayerNickname(): string {
