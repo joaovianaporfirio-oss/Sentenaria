@@ -1,5 +1,4 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAnalytics, isSupported } from 'firebase/analytics';
 import {
   getAuth,
   onAuthStateChanged,
@@ -21,14 +20,6 @@ export const firebaseConfig = {
 
 export const app =
   getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-
-// Initialize Analytics only in browser environments that support it
-export const analyticsPromise =
-  typeof window !== 'undefined'
-    ? isSupported()
-        .then((yes) => (yes ? getAnalytics(app) : null))
-        .catch(() => null)
-    : Promise.resolve(null);
 
 export const auth = getAuth(app);
 export const db = getDatabase(app);

@@ -1,3 +1,4 @@
+import { signInAnonymously } from 'firebase/auth';
 import {
   get,
   onDisconnect,
@@ -25,7 +26,7 @@ import {
   MoveRecord,
   Player,
 } from '../core/types';
-import { db, ensurePlayerIdentity } from './firebaseConfig';
+import { auth, db, ensurePlayerIdentity } from './firebaseConfig';
 import {
   generateRoomCode,
   validateAndNormalizeRoomCode,
@@ -427,9 +428,14 @@ export async function createOnlineRoom(
   hostName: string,
   config: Partial<GameConfig>
 ): Promise<{ roomData: OnlineRoomData; role: OnlineRole; myColor: Player }> {
+  if (!auth.currentUser) {
+    await signInAnonymously(auth);
+  }
   const identity = await ensurePlayerIdentity();
   const effectiveHostId =
-    hostId && hostId.trim() !== '' ? hostId.trim() : identity.uid;
+    hostId && hostId.trim() !== ''
+      ? hostId.trim()
+      : auth.currentUser?.uid || identity.uid;
   const cleanName = hostName.trim() || 'Host (Vermelho)';
   const initialGameState = createInitialGameState({
     ...config,
@@ -510,9 +516,14 @@ export async function joinOnlineRoom(
     throw new Error(validation.error || 'Código de sala inválido.');
   }
 
+  if (!auth.currentUser) {
+    await signInAnonymously(auth);
+  }
   const identity = await ensurePlayerIdentity();
   const resolvedPlayerId =
-    playerId && playerId.trim() !== '' ? playerId.trim() : identity.uid;
+    playerId && playerId.trim() !== ''
+      ? playerId.trim()
+      : auth.currentUser?.uid || identity.uid;
 
   const code = validation.normalizedCode;
   const cleanName = playerName.trim() || 'Convidado (Azul)';
