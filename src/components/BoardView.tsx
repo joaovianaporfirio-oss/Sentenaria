@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Repeat } from 'lucide-react';
 import { COL_LABELS, ROW_LABELS } from '../core/constants';
 import { isValidMove } from '../core/gameEngine';
 import {
@@ -301,26 +300,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
                       inTrinca={cell.inTrinca}
                       trincaCount={cell.trincaCount}
                       animateIn={animationsEnabled && isLastPlaced}
-                    />
-                  )}
-
-                  {/* Subtle interactive indicator on the 1st piece while steal opportunity is active */}
-                  {isStealable && (
-                    <span
-                      title="Clique para roubar esta peça"
-                      className="pointer-events-none absolute top-0.5 right-0.5 w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full flex items-center justify-center text-white shadow-sm animate-pulse"
-                      style={{ backgroundColor: blueColor }}
-                    >
-                      <Repeat className="w-2 h-2 sm:w-2.5 sm:h-2.5 stroke-[2.8]" />
-                    </span>
-                  )}
-
-                  {/* Subtle badge when piece was stolen via Pie Rule */}
-                  {cell.stolenByPieRule && (
-                    <span
-                      title="Peça roubada pelo P2"
-                      className="pointer-events-none absolute top-0.5 left-0.5 w-2 h-2 rounded-full ring-1 ring-white/80"
-                      style={{ backgroundColor: blueColor }}
                     />
                   )}
                 </button>
