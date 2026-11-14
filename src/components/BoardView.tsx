@@ -163,30 +163,36 @@ export const BoardView: React.FC<BoardViewProps> = ({
       {/* Column coordinate header */}
       {showCoordinates && (
         <div
-          className={`w-full grid grid-cols-9 px-3 sm:px-4 mb-1 text-[10px] sm:text-xs font-extrabold tracking-wider text-center opacity-60 ${
+          className={`w-full flex items-center mb-1 text-[10px] sm:text-xs font-extrabold tracking-wider opacity-60 select-none ${
             darkMode ? 'text-slate-300' : 'text-slate-600'
           }`}
-          style={{ paddingLeft: showCoordinates ? '1.75rem' : undefined }}
         >
-          {COL_LABELS.map((label) => (
-            <div key={label}>{label}</div>
-          ))}
+          <div className="w-5 sm:w-6 mr-1.5 sm:mr-2 shrink-0" aria-hidden="true" />
+          <div className="flex-1 grid grid-cols-9 gap-1 sm:gap-1.5 px-[12px] sm:px-[18px]">
+            {COL_LABELS.map((label) => (
+              <div
+                key={label}
+                className="flex items-center justify-center text-center leading-none"
+              >
+                {label}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      <div className="w-full flex items-center">
+      <div className="w-full flex items-stretch">
         {/* Row coordinate sidebar */}
         {showCoordinates && (
           <div
-            className={`flex flex-col justify-around pr-1.5 sm:pr-2 text-[10px] sm:text-xs font-extrabold opacity-60 select-none ${
+            className={`w-5 sm:w-6 mr-1.5 sm:mr-2 shrink-0 grid grid-rows-9 gap-1 sm:gap-1.5 py-[12px] sm:py-[18px] text-[10px] sm:text-xs font-extrabold opacity-60 select-none ${
               darkMode ? 'text-slate-300' : 'text-slate-600'
             }`}
-            style={{ height: '100%' }}
           >
             {ROW_LABELS.map((label) => (
               <div
                 key={label}
-                className="h-7 sm:h-11 flex items-center justify-center"
+                className="flex items-center justify-center leading-none"
               >
                 {label}
               </div>
