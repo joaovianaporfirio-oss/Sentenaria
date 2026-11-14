@@ -597,19 +597,17 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
 
                 <div className="p-3.5 rounded-xl bg-black/5 dark:bg-white/5 text-xs font-bold space-y-1.5 mb-4">
                   <div className="flex justify-between">
-                    <span className="opacity-75">Modo de Regras:</span>
+                    <span className="opacity-75">Modalidade:</span>
                     <strong className="font-black">
-                      {config.ruleMode === 'regular'
-                        ? 'Modo Regular'
-                        : 'Modo Adjacente'}
+                      {config.scoringMode === 'eight_points'
+                        ? '8 Pontos'
+                        : 'Modo Livre'}
                     </strong>
                   </div>
                   <div className="flex justify-between">
-                    <span className="opacity-75">Sistema de Pontuação:</span>
+                    <span className="opacity-75">Regras Táticas:</span>
                     <strong className="font-black">
-                      {config.scoringMode === 'eight_points'
-                        ? 'Corrida 8 Pontos'
-                        : 'Modo Livre (81 Casas)'}
+                      Modo Adjacente + Roubo de Peça
                     </strong>
                   </div>
                   <div className="flex justify-between">

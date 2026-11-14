@@ -3,14 +3,14 @@ import {
   isCenterIndex,
   LINES_BY_CELL,
   TARGET_SCORE_EIGHT,
-   toCoord,
+  toCoord,
   TOTAL_CELLS,
 } from '../core/constants';
 import {
   getOpponent,
   getValidMoveIndices,
-  hasRedMadeFirstMove,
   makeMove,
+  resolvePieRuleDecision,
 } from '../core/gameEngine';
 import { countImmediateTrincasForMove } from '../core/trincaDetector';
 import {
@@ -19,9 +19,50 @@ import {
   CellState,
   GameRuleMode,
   GameState,
+  PieRuleDecision,
   Player,
-  ScoringMode,
 } from '../core/types';
+
+/**
+ * Decides for the AI (when playing as Blue) whether to steal Red's first piece
+ * ('steal') or continue normally as Blue ('continue') under the Pie Rule ("Roubo de Peça").
+ */
+export function chooseAIPieRuleDecision(
+  state: GameState,
+  difficulty: AIDifficulty = state.config.aiDifficulty
+): PieRuleDecision {
+  const firstIdx =
+    state.firstMoveIndex !== null
+      ? state.firstMoveIndex
+      : state.board.findIndex((c) => c.owner === 'red');
+
+  if (firstIdx < 0 || firstIdx >= TOTAL_CELLS) {
+    return 'continue';
+  }
+
+  const lineConnectivity = LINES_BY_CELL[firstIdx].length;
+  const inCenter = isCenterIndex(firstIdx);
+
+  if (difficulty === 'easy') {
+    return inCenter && Math.random() < 0.5 ? 'steal' : 'continue';
+  }
+
+  if (difficulty === 'medium') {
+    if (inCenter || lineConnectivity >= 10) {
+      return 'steal';
+    }
+    return 'continue';
+  }
+
+  // Hard AI: Steals if Red placed the first piece in the 3x3 center or inner 5x5 high-leverage zone
+  const r = Math.floor(firstIdx / 9);
+  const c = firstIdx % 9;
+  const inInner5x5 = r >= 2 && r <= 6 && c >= 2 && c <= 6;
+  if (inCenter || (inInner5x5 && lineConnectivity >= 8)) {
+    return 'steal';
+  }
+  return 'continue';
+}
 
 /**
  * Main entry point to select a move for the AI based on the difficulty setting.
@@ -121,29 +162,22 @@ function chooseMediumMove(state: GameState, validIndices: number[]): CellCoord {
       moveScore += myImmediatePts * 1200;
     }
 
-    // 2. Blocking opponent's immediate trinca (only if opponent can actually play at `idx`)
-    const oppCanPlayHere = !(
-      oppPlayer === 'red' &&
-      isCenterIndex(idx) &&
-      !hasRedMadeFirstMove(state.board)
+    // 2. Blocking opponent's immediate trinca
+    const oppImmediatePts = countImmediateTrincasForMove(
+      state.board,
+      idx,
+      oppPlayer,
+      ruleMode,
+      state.formedTrincaIds
     );
-    if (oppCanPlayHere) {
-      const oppImmediatePts = countImmediateTrincasForMove(
-        state.board,
-        idx,
-        oppPlayer,
-        ruleMode,
-        state.formedTrincaIds
-      );
-      if (oppImmediatePts > 0) {
-        // Urgent block if opponent is close to 8 points
-        const urgencyMultiplier =
-          scoringMode === 'eight_points' &&
-          state.scores[oppPlayer] + oppImmediatePts >= TARGET_SCORE_EIGHT
-            ? 2500
-            : 950;
-        moveScore += oppImmediatePts * urgencyMultiplier;
-      }
+    if (oppImmediatePts > 0) {
+      // Urgent block if opponent is close to 8 points
+      const urgencyMultiplier =
+        scoringMode === 'eight_points' &&
+        state.scores[oppPlayer] + oppImmediatePts >= TARGET_SCORE_EIGHT
+          ? 2500
+          : 950;
+      moveScore += oppImmediatePts * urgencyMultiplier;
     }
 
     // 3. Evaluate line setups passing through `idx`
@@ -198,7 +232,6 @@ function evaluateCellPositionalPotential(
     let aiOwned = 0;
     let oppOwned = 0;
     let usedCount = 0;
-    let redForbiddenEmpty = false;
 
     for (const cellIdx of line.indices) {
       if (cellIdx === idx) continue;
@@ -209,37 +242,23 @@ function evaluateCellPositionalPotential(
       } else if (cell.owner === oppPlayer) {
         oppOwned++;
         if (cell.inTrinca) usedCount++;
-      } else {
-        if (isCenterIndex(cellIdx)) {
-          redForbiddenEmpty = true;
-        }
       }
     }
 
     // Friendly line potential (no opponent pieces blocking this 3-cell segment)
-    // From Red's 2nd move onward, Red can access the center normally.
-    if (oppOwned === 0) {
-      const validUnderRule =
-        ruleMode === 'regular' ? usedCount === 0 : usedCount <= 1;
-
-      if (validUnderRule) {
-        if (aiOwned === 1) {
-          // Creates a 2-in-a-row threat!
-          score += ruleMode === 'adjacent' && usedCount === 1 ? 85 : 75;
-        } else if (aiOwned === 0) {
-          // Starts a fresh 3-cell line
-          score += 12;
-        }
+    if (oppOwned === 0 && usedCount <= 1) {
+      if (aiOwned === 1) {
+        // Creates a 2-in-a-row threat!
+        score += usedCount === 1 ? 85 : 75;
+      } else if (aiOwned === 0) {
+        // Starts a fresh 3-cell line
+        score += 12;
       }
     }
 
     // Defensive disruption of opponent's 1-in-a-row before it becomes a 2-in-a-row
-    if (aiOwned === 0 && oppOwned === 1) {
-      const validForOpp =
-        ruleMode === 'regular' ? usedCount === 0 : usedCount <= 1;
-      if (validForOpp) {
-        score += 38;
-      }
+    if (aiOwned === 0 && oppOwned === 1 && usedCount <= 1) {
+      score += 38;
     }
   }
 
@@ -312,11 +331,10 @@ function chooseHardMove(state: GameState, validIndices: number[]): CellCoord {
     }
   }
 
-  // 2. Opening book / early-game strategic priority on first 2 turns
+  // 2. Opening book / early-game strategic priority on first turn
   if (state.turnCount === 0 && aiPlayer === 'red') {
-    // Best opening cells for Red are the strong inner-ring corners/edges just outside the 3x3 center:
-    // (2,2), (2,6), (6,2), (6,6), (2,4), (4,2), (4,6), (6,4)
-    const primeRedOpeners = [20, 24, 56, 60, 22, 38, 42, 58];
+    // With the Pie Rule active, Red opens on a balanced inner-ring cell so Blue doesn't get a free center steal
+    const primeRedOpeners = [20, 24, 56, 60, 22, 38, 42, 58, 40, 31, 49];
     const picked =
       primeRedOpeners[Math.floor(Math.random() * primeRedOpeners.length)];
     return toCoord(picked);
@@ -366,7 +384,13 @@ function chooseHardMove(state: GameState, validIndices: number[]): CellCoord {
       }
 
       const coord = toCoord(moveIdx);
-      const childState = makeMove(state, coord.row, coord.col);
+      let childState = makeMove(state, coord.row, coord.col);
+      if (childState.pieRuleState === 'pending') {
+        childState = resolvePieRuleDecision(
+          childState,
+          chooseAIPieRuleDecision(childState, 'hard')
+        );
+      }
 
       const score = alphaBeta(
         childState,
@@ -583,28 +607,21 @@ function rankCandidateMoves(
     }
 
     // 2. Blocking immediate points for opponent
-    const oppCanPlay = !(
-      opponent === 'red' &&
-      isCenterIndex(idx) &&
-      !hasRedMadeFirstMove(state.board)
+    const oppPts = countImmediateTrincasForMove(
+      state.board,
+      idx,
+      opponent,
+      ruleMode,
+      state.formedTrincaIds
     );
-    if (oppCanPlay) {
-      const oppPts = countImmediateTrincasForMove(
-        state.board,
-        idx,
-        opponent,
-        ruleMode,
-        state.formedTrincaIds
-      );
-      if (oppPts > 0) {
-        if (
-          scoringMode === 'eight_points' &&
-          state.scores[opponent] + oppPts >= TARGET_SCORE_EIGHT
-        ) {
-          priority += 350_000;
-        } else {
-          priority += oppPts * 12_000;
-        }
+    if (oppPts > 0) {
+      if (
+        scoringMode === 'eight_points' &&
+        state.scores[opponent] + oppPts >= TARGET_SCORE_EIGHT
+      ) {
+        priority += 350_000;
+      } else {
+        priority += oppPts * 12_000;
       }
     }
 
@@ -722,11 +739,9 @@ export function evaluateBoardState(
     // Ignore contested lines (contain both Red and Blue pieces)
     if (aiCount > 0 && oppCount > 0) continue;
 
-    const validUnderRule =
-      ruleMode === 'regular' ? usedCount === 0 : usedCount <= 1;
-    if (!validUnderRule) continue;
+    if (usedCount > 1) continue;
 
-    // Evaluate AI-owned partial lines (after turn 0, both players can fill center cells)
+    // Evaluate AI-owned partial lines
     if (aiCount > 0) {
       if (aiCount === 2 && emptyIdx !== -1) {
         // Live 2-in-a-row threat!
@@ -735,7 +750,7 @@ export function evaluateBoardState(
           (aiThreatEmptyCells.get(emptyIdx) ?? 0) + 1
         );
       } else if (aiCount === 1) {
-        aiPotentialLines += ruleMode === 'adjacent' && usedCount === 1 ? 2 : 1;
+        aiPotentialLines += usedCount === 1 ? 2 : 1;
       }
     }
 
@@ -747,7 +762,7 @@ export function evaluateBoardState(
           (oppThreatEmptyCells.get(emptyIdx) ?? 0) + 1
         );
       } else if (oppCount === 1) {
-        oppPotentialLines += ruleMode === 'adjacent' && usedCount === 1 ? 2 : 1;
+        oppPotentialLines += usedCount === 1 ? 2 : 1;
       }
     }
   }

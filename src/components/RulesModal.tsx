@@ -3,11 +3,11 @@ import {
   BookOpen,
   Check,
   Crown,
+  Grid,
   Infinity as InfinityIcon,
   Layers,
-  Lock,
+  Repeat,
   Sparkles,
-  Target,
   X,
 } from 'lucide-react';
 import { soundEngine } from '../audio/soundEngine';
@@ -53,7 +53,8 @@ export const RulesModal: React.FC<RulesModalProps> = ({
                 Manual de Regras — Sentenaria
               </h2>
               <p className="text-xs font-bold opacity-70">
-                Tudo o que você precisa saber para dominar o tabuleiro 9×9
+                Modalidades, Modo Adjacente obrigatório, 81 casas livres e Roubo
+                de Peça
               </p>
             </div>
           </div>
@@ -77,146 +78,156 @@ export const RulesModal: React.FC<RulesModalProps> = ({
 
         {/* Content Sections */}
         <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* 1. Conceito Básico */}
+          {/* 1. Conceito Básico e Liberdade nas 81 Casas */}
           <div className={`p-4 rounded-2xl border-2 ${sectionCard}`}>
             <div className="flex items-center gap-2 font-black text-base font-display mb-2">
               <Sparkles className="w-5 h-5" style={{ color: accentColor }} />
               <span>1. O Conceito de Sentenaria</span>
             </div>
             <p className="text-xs sm:text-sm font-semibold opacity-80 leading-relaxed">
-              Sentenaria é disputado em um tabuleiro de{' '}
+              Sentenaria é um jogo de estratégia disputado em um tabuleiro de{' '}
               <strong>9×9 (81 casas)</strong>. Em cada turno, um jogador
               posiciona um símbolo em uma casa vazia disponível.
             </p>
             <p className="text-xs sm:text-sm font-semibold opacity-80 leading-relaxed mt-2">
-              Uma <strong>Trinca (1 ponto)</strong> é formada quando três
-              símbolos iguais do mesmo jogador ficam alinhados consecutivamente
-              na <strong>horizontal, vertical ou diagonal</strong>.
+              Uma <strong>Trinca (1 ponto)</strong> é formada quando três peças
+              sob controle do mesmo jogador ficam alinhadas consecutivamente na{' '}
+              <strong>horizontal, vertical ou diagonal</strong>.
             </p>
           </div>
 
-          {/* 2. Jogadores e Região Central 3x3 */}
+          {/* 2. Liberdade Total no Tabuleiro */}
           <div className={`p-4 rounded-2xl border-2 ${sectionCard}`}>
             <div className="flex items-center gap-2 font-black text-base font-display mb-2">
-              <Lock className="w-5 h-5" style={{ color: redColor }} />
-              <span>2. Assimetria e Região Central 3×3</span>
+              <Grid className="w-5 h-5" style={{ color: accentColor }} />
+              <span>2. Todas as 81 Casas Livres</span>
             </div>
-            <div className="space-y-2 text-xs sm:text-sm font-semibold opacity-85">
-              <div className="flex items-start gap-2.5">
-                <div className="mt-0.5 shrink-0">
-                  <PlayerSymbol
-                    player="red"
-                    symbolStyle={symbolStyle}
-                    color={redColor}
-                    size="sm"
-                  />
-                </div>
-                <div>
-                  <strong style={{ color: redColor }}>
-                    Jogador Vermelho (1º):
-                  </strong>{' '}
-                  Sempre inicia a partida. Na sua{' '}
-                  <strong>primeira jogada</strong>, o Vermelho{' '}
-                  <strong>
-                    não pode posicionar peça no quadrado central 3×3
-                  </strong>
-                  . A partir da sua <strong>segunda jogada</strong>, o Vermelho
-                  passa a ter acesso normal ao centro!
-                </div>
-              </div>
+            <p className="text-xs sm:text-sm font-semibold opacity-85 leading-relaxed">
+              Não existe restrição sobre o quadrado central 3×3 nem sobre
+              qualquer região do tabuleiro.
+            </p>
+            <p className="text-xs sm:text-sm font-semibold opacity-85 leading-relaxed mt-2">
+              Tanto o jogador{' '}
+              <strong style={{ color: redColor }}>Vermelho</strong> (que sempre
+              inicia a partida) quanto o jogador{' '}
+              <strong style={{ color: blueColor }}>Azul</strong> podem jogar
+              livremente em <strong>qualquer uma das 81 casas vazias</strong>{' '}
+              desde o primeiro turno!
+            </p>
+          </div>
 
-              <div className="flex items-start gap-2.5">
-                <div className="mt-0.5 shrink-0">
+          {/* 3. Mecânica de Roubo de Peça (Pie Rule) */}
+          <div
+            className={`md:col-span-2 p-4 sm:p-5 rounded-2xl border-2 ${sectionCard}`}
+          >
+            <div className="flex items-center gap-2 font-black text-base sm:text-lg font-display mb-3">
+              <Repeat className="w-5 h-5" style={{ color: blueColor }} />
+              <span>3. Mecânica de Balanceamento: Roubo de Peça</span>
+            </div>
+
+            <p className="text-xs sm:text-sm font-semibold opacity-85 leading-relaxed mb-3">
+              Logo após o jogador{' '}
+              <strong style={{ color: redColor }}>Vermelho</strong> realizar a{' '}
+              <strong>primeira jogada da partida</strong> e antes de o jogador{' '}
+              <strong style={{ color: blueColor }}>Azul</strong> fazer sua
+              primeira jogada no tabuleiro, o Azul deve escolher uma entre duas
+              opções:
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Option A */}
+              <div className="p-3.5 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10">
+                <div className="font-black text-sm flex items-center gap-2 mb-1.5">
                   <PlayerSymbol
                     player="blue"
                     symbolStyle={symbolStyle}
                     color={blueColor}
                     size="sm"
                   />
-                </div>
-                <div>
-                  <strong style={{ color: blueColor }}>
-                    Jogador Azul (2º):
-                  </strong>{' '}
-                  Joga em segundo e{' '}
-                  <strong>
-                    pode posicionar símbolos em qualquer casa vazia desde a sua
-                    primeira jogada
-                  </strong>
-                  , inclusive no centro 3×3!
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 3. Modo Regular vs Modo Adjacente */}
-          <div
-            className={`md:col-span-2 p-4 sm:p-5 rounded-2xl border-2 ${sectionCard}`}
-          >
-            <div className="flex items-center gap-2 font-black text-base sm:text-lg font-display mb-3">
-              <Layers className="w-5 h-5" style={{ color: accentColor }} />
-              <span>3. Modos de Jogo: Regular vs. Adjacente</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Regular Mode Box */}
-              <div className="p-3.5 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10">
-                <div className="font-black text-sm flex items-center gap-1.5 mb-1.5">
-                  <Target className="w-4 h-4" style={{ color: accentColor }} />
-                  <span>Modo Regular (Trincas Isoladas)</span>
+                  <span>Opção A — Continuar como Azul</span>
                 </div>
                 <p className="text-xs font-semibold opacity-80 leading-relaxed">
-                  Assim que uma trinca é formada, suas{' '}
-                  <strong>3 casas são seladas</strong> e não podem mais ser
-                  reutilizadas para formar novas trincas em nenhuma direção.
-                  Cada nova trinca exige <strong>3 casas inéditas</strong>.
+                  A primeira peça permanece vermelha sob controle do jogador{' '}
+                  <strong style={{ color: redColor }}>Vermelho</strong>. O
+                  jogador <strong style={{ color: blueColor }}>Azul</strong>{' '}
+                  realiza sua primeira jogada normalmente no tabuleiro neste
+                  mesmo turno.
                 </p>
               </div>
 
-              {/* Adjacent Mode Box */}
+              {/* Option B */}
               <div className="p-3.5 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10">
-                <div className="font-black text-sm flex items-center gap-1.5 mb-1.5">
-                  <Layers className="w-4 h-4" style={{ color: accentColor }} />
-                  <span>Modo Adjacente (Conexão Tática)</span>
+                <div className="font-black text-sm flex items-center gap-2 mb-1.5">
+                  <Repeat className="w-4 h-4" style={{ color: blueColor }} />
+                  <span>Opção B — Roubar a Primeira Peça</span>
                 </div>
                 <p className="text-xs font-semibold opacity-80 leading-relaxed">
-                  Permite utilizar <strong>1 símbolo de uma trinca já formada</strong>{' '}
-                  como pivô para construir uma nova trinca! Para ser válida,{' '}
-                  <strong>
-                    pelo menos 2 das 3 casas devem ser inéditas
-                  </strong>{' '}
-                  (nunca terem participado de trincas antes).
+                  A peça colocada pelo Vermelho permanece na mesma casa, mas{' '}
+                  <strong>muda de vermelha para azul</strong> e passa a
+                  pertencer ao jogador{' '}
+                  <strong style={{ color: blueColor }}>Azul</strong> para
+                  formação de trincas e pontos. O turno passa imediatamente para
+                  o jogador{' '}
+                  <strong style={{ color: redColor }}>Vermelho</strong>.
                 </p>
               </div>
             </div>
-          </div>
 
-          {/* 4. Sistema de Pontuação */}
-          <div className={`p-4 rounded-2xl border-2 ${sectionCard}`}>
-            <div className="flex items-center gap-2 font-black text-base font-display mb-2">
-              <Crown className="w-5 h-5" style={{ color: accentColor }} />
-              <span>4. Modo 8 Pontos</span>
-            </div>
-            <p className="text-xs sm:text-sm font-semibold opacity-80 leading-relaxed">
-              Cada trinca válida vale <strong>1 ponto</strong>. O primeiro
-              jogador a alcançar <strong>8 pontos</strong> vence a partida
-              imediatamente! Ideal para partidas dinâmicas e disputas intensas.
+            <p className="mt-3 text-xs font-bold opacity-75">
+              Importante: o roubo ocorre no máximo uma única vez por partida e{' '}
+              <strong>não troca a identidade dos jogadores</strong> (o Jogador 1
+              continua sendo Vermelho e o Jogador 2 continua sendo Azul).
             </p>
           </div>
 
+          {/* 4. Modo Adjacente Obrigatório */}
+          <div
+            className={`md:col-span-2 p-4 sm:p-5 rounded-2xl border-2 ${sectionCard}`}
+          >
+            <div className="flex items-center gap-2 font-black text-base sm:text-lg font-display mb-2">
+              <Layers className="w-5 h-5" style={{ color: accentColor }} />
+              <span>4. Regra Obrigatória: Modo Adjacente</span>
+            </div>
+            <p className="text-xs sm:text-sm font-semibold opacity-85 leading-relaxed">
+              Em todas as partidas (tanto em <strong>8 Pontos</strong> quanto no{' '}
+              <strong>Modo Livre</strong>), o <strong>Modo Adjacente</strong>{' '}
+              está sempre ativo. Uma casa que já fez parte de uma trinca pode
+              ser reutilizada como <strong>pivô</strong> para construir uma nova
+              trinca, desde que{' '}
+              <strong>
+                pelo menos 2 das 3 casas da nova trinca sejam inéditas
+              </strong>{' '}
+              (nunca tenham participado de uma trinca anterior). Combinações com
+              2 ou 3 casas já utilizadas não pontuam.
+            </p>
+          </div>
+
+          {/* 5. Modalidade 8 Pontos */}
+          <div className={`p-4 rounded-2xl border-2 ${sectionCard}`}>
+            <div className="flex items-center gap-2 font-black text-base font-display mb-2">
+              <Crown className="w-5 h-5" style={{ color: accentColor }} />
+              <span>5. Modalidade: 8 Pontos (Padrão)</span>
+            </div>
+            <p className="text-xs sm:text-sm font-semibold opacity-80 leading-relaxed">
+              Cada trinca válida corresponde a <strong>1 ponto</strong>. O
+              primeiro jogador a alcançar <strong>8 pontos</strong> vence a
+              partida imediatamente!
+            </p>
+          </div>
+
+          {/* 6. Modalidade Modo Livre */}
           <div className={`p-4 rounded-2xl border-2 ${sectionCard}`}>
             <div className="flex items-center gap-2 font-black text-base font-display mb-2">
               <InfinityIcon
                 className="w-5 h-5"
                 style={{ color: accentColor }}
               />
-              <span>5. Modo Livre</span>
+              <span>6. Modalidade: Modo Livre</span>
             </div>
             <p className="text-xs sm:text-sm font-semibold opacity-80 leading-relaxed">
-              Não há limite de pontos. A partida continua até que todas as{' '}
-              <strong>81 casas estejam preenchidas</strong> ou não existam mais
-              jogadas válidas para o jogador do turno. Vence quem acumular a
-              maior pontuação final!
+              Não existe meta fixa de pontuação. A partida continua até que
+              todas as <strong>81 casas estejam preenchidas</strong>, vencendo
+              quem conquistar a maior pontuação final!
             </p>
           </div>
         </div>

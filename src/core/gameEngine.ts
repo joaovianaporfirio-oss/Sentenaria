@@ -1,7 +1,6 @@
 import {
   BOARD_SIZE,
-  isCenterIndex,
-  isCenterRegion,
+  toCoord,
   toIndex,
   TOTAL_CELLS,
 } from './constants';
@@ -12,11 +11,12 @@ import {
   GameConfig,
   GameState,
   MoveRecord,
+  PieRuleDecision,
   Player,
 } from './types';
 
 export const DEFAULT_GAME_CONFIG: GameConfig = {
-  ruleMode: 'regular',
+  ruleMode: 'adjacent',
   scoringMode: 'eight_points',
   opponentMode: 'pvp',
   aiDifficulty: 'medium',
@@ -32,6 +32,9 @@ export function createInitialBoard(): CellState[] {
         col,
         index: toIndex(row, col),
         owner: null,
+        visualColor: null,
+        placedBy: null,
+        stolenByPieRule: false,
         inTrinca: false,
         trincaCount: 0,
         placedAtTurn: null,
@@ -47,11 +50,12 @@ export function createInitialGameState(
   const mergedConfig: GameConfig = {
     ...DEFAULT_GAME_CONFIG,
     ...config,
+    ruleMode: 'adjacent',
   };
 
   return {
     board: createInitialBoard(),
-    currentPlayer: 'red', // Rule 4: Red player always starts
+    currentPlayer: 'red', // Red player always starts
     turnCount: 0,
     scores: {
       red: 0,
@@ -65,6 +69,8 @@ export function createInitialGameState(
     winner: null,
     endReason: null,
     config: mergedConfig,
+    pieRuleState: 'not_triggered',
+    firstMoveIndex: null,
   };
 }
 
@@ -73,13 +79,11 @@ export function getOpponent(player: Player): Player {
 }
 
 /**
- * Returns true if the Red player has already placed at least one symbol on the board.
- * Since pieces are never removed during a match, Red is on their first move iff
- * there are currently 0 Red symbols on the board.
+ * Returns true if at least one piece has been placed on the board.
  */
 export function hasRedMadeFirstMove(board: readonly CellState[]): boolean {
   for (let i = 0; i < TOTAL_CELLS; i++) {
-    if (board[i].owner === 'red') {
+    if (board[i].owner !== null) {
       return true;
     }
   }
@@ -92,48 +96,28 @@ export function hasRedMadeFirstMove(board: readonly CellState[]): boolean {
  * Rules:
  * - Coordinates must be within 0..8.
  * - Target cell must be empty (`owner === null`).
- * - Red player cannot place their FIRST move in the central 3x3 region (rows 3..5, cols 3..5).
- * - From Red's second move onward, Red can play in the central 3x3 region normally.
- * - Blue player can place symbols in any available cell, including the center, from their first move.
+ * - Both Red and Blue can play freely in any of the 81 cells (no central restriction).
  */
 export function isValidMove(
   board: readonly CellState[],
   row: number,
   col: number,
-  player: Player
+  _player?: Player
 ): boolean {
   if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) {
     return false;
   }
   const index = toIndex(row, col);
-  if (board[index].owner !== null) {
-    return false;
-  }
-  if (
-    player === 'red' &&
-    isCenterRegion(row, col) &&
-    !hasRedMadeFirstMove(board)
-  ) {
-    return false;
-  }
-  return true;
+  return board[index].owner === null;
 }
 
 export function isValidMoveIndex(
   board: readonly CellState[],
   index: number,
-  player: Player
+  _player?: Player
 ): boolean {
   if (index < 0 || index >= TOTAL_CELLS) return false;
-  if (board[index].owner !== null) return false;
-  if (
-    player === 'red' &&
-    isCenterIndex(index) &&
-    !hasRedMadeFirstMove(board)
-  ) {
-    return false;
-  }
-  return true;
+  return board[index].owner === null;
 }
 
 /**
@@ -141,16 +125,11 @@ export function isValidMoveIndex(
  */
 export function getValidMoveIndices(
   board: readonly CellState[],
-  player: Player
+  _player?: Player
 ): number[] {
   const validIndices: number[] = [];
-  const restrictRedCenter = player === 'red' && !hasRedMadeFirstMove(board);
-
   for (let i = 0; i < TOTAL_CELLS; i++) {
     if (board[i].owner === null) {
-      if (restrictRedCenter && isCenterIndex(i)) {
-        continue;
-      }
       validIndices.push(i);
     }
   }
@@ -159,7 +138,7 @@ export function getValidMoveIndices(
 
 /**
  * Executes a move for the current player at `(row, col)` and returns the new immutable GameState.
- * Throws an error if the move is invalid or the game has already finished.
+ * Throws an error if the move is invalid, if the Pie Rule decision is pending, or if the game has finished.
  */
 export function makeMove(
   state: GameState,
@@ -168,6 +147,12 @@ export function makeMove(
 ): GameState {
   if (state.status !== 'playing') {
     throw new Error('Cannot make a move after the match has finished.');
+  }
+
+  if (state.pieRuleState === 'pending') {
+    throw new Error(
+      'O jogador Azul precisa decidir entre Continuar como Azul ou Roubar a primeira peça antes de realizar uma jogada no tabuleiro.'
+    );
   }
 
   const player = state.currentPlayer;
@@ -183,6 +168,9 @@ export function makeMove(
   // Clone board cells
   const nextBoard: CellState[] = state.board.map((cell) => ({ ...cell }));
   nextBoard[moveIndex].owner = player;
+  nextBoard[moveIndex].visualColor = player;
+  nextBoard[moveIndex].placedBy = player;
+  nextBoard[moveIndex].stolenByPieRule = false;
   nextBoard[moveIndex].placedAtTurn = nextTurnNumber;
 
   // Clone formedTrincaIds
@@ -190,12 +178,12 @@ export function makeMove(
     ...state.formedTrincaIds,
   };
 
-  // Detect new trincas according to the active rule mode ('regular' vs 'adjacent')
+  // Detect new trincas according to the mandatory adjacent rule
   const newlyFormed = detectAndApplyNewTrincas(
     nextBoard,
     moveIndex,
     player,
-    state.config.ruleMode,
+    'adjacent',
     nextFormedTrincaIds,
     nextTurnNumber
   );
@@ -227,12 +215,20 @@ export function makeMove(
     pointsEarned,
     scoreAfter: { ...nextScores },
     timestamp: Date.now(),
+    isPieSteal: false,
   };
+
+  // Trigger the Pie Rule decision immediately after Red's 1st move (turnCount === 0 -> 1)
+  const isRedFirstMove =
+    state.turnCount === 0 &&
+    player === 'red' &&
+    state.pieRuleState === 'not_triggered';
 
   return {
     ...state,
     board: nextBoard,
-    currentPlayer: outcome.status === 'playing' ? nextPlayer : state.currentPlayer,
+    currentPlayer:
+      outcome.status === 'playing' ? nextPlayer : state.currentPlayer,
     turnCount: nextTurnNumber,
     scores: nextScores,
     formedTrincas: [...state.formedTrincas, ...newlyFormed],
@@ -242,5 +238,89 @@ export function makeMove(
     status: outcome.status,
     winner: outcome.winner,
     endReason: outcome.endReason,
+    pieRuleState: isRedFirstMove ? 'pending' : state.pieRuleState,
+    firstMoveIndex: isRedFirstMove ? moveIndex : state.firstMoveIndex,
+  };
+}
+
+/**
+ * Resolves the second player's (Blue) one-time Pie Rule ("Roubo de Peça") decision
+ * after Red's first move:
+ * - 'continue': Blue keeps playing normally as Blue and immediately makes their first Blue move on the board.
+ * - 'steal': Blue steals the first piece placed by Red; the piece stays in the same cell, changes its
+ *   ownership (`owner = 'blue'`) and visual appearance (`visualColor = 'blue'`), and the turn passes to Red.
+ *   Player identities (Red = Player 1, Blue = Player 2) never swap.
+ */
+export function resolvePieRuleDecision(
+  state: GameState,
+  decision: PieRuleDecision
+): GameState {
+  if (state.status !== 'playing') {
+    throw new Error('A partida já foi encerrada.');
+  }
+
+  if (state.pieRuleState !== 'pending') {
+    throw new Error(
+      'A decisão do Roubo de Peça não está disponível neste momento.'
+    );
+  }
+
+  if (state.currentPlayer !== 'blue') {
+    throw new Error(
+      'Apenas o jogador Azul pode tomar a decisão do Roubo de Peça.'
+    );
+  }
+
+  // Locate the first piece placed by Red
+  const targetIndex =
+    state.firstMoveIndex !== null
+      ? state.firstMoveIndex
+      : state.board.findIndex((c) => c.owner === 'red');
+
+  if (targetIndex < 0 || targetIndex >= TOTAL_CELLS || state.board[targetIndex].owner !== 'red') {
+    throw new Error('Primeira peça vermelha não encontrada no tabuleiro.');
+  }
+
+  if (decision === 'continue') {
+    return {
+      ...state,
+      pieRuleState: 'continued',
+      currentPlayer: 'blue',
+    };
+  }
+
+  // Option B: Steal the first piece ('steal')
+  const nextTurnNumber = state.turnCount + 1;
+  const nextBoard: CellState[] = state.board.map((cell) => ({ ...cell }));
+  const stolenCell = nextBoard[targetIndex];
+
+  stolenCell.owner = 'blue';
+  stolenCell.visualColor = 'blue';
+  stolenCell.placedBy = stolenCell.placedBy ?? 'red';
+  stolenCell.stolenByPieRule = true;
+
+  const { row, col } = toCoord(targetIndex);
+  const stealMoveRecord: MoveRecord = {
+    turnNumber: nextTurnNumber,
+    player: 'blue',
+    row,
+    col,
+    index: targetIndex,
+    trincasFormed: [],
+    pointsEarned: 0,
+    scoreAfter: { ...state.scores },
+    timestamp: Date.now(),
+    isPieSteal: true,
+  };
+
+  return {
+    ...state,
+    board: nextBoard,
+    currentPlayer: 'red', // After stealing, turn passes back to Red
+    turnCount: nextTurnNumber,
+    lastMove: stealMoveRecord,
+    moveHistory: [...state.moveHistory, stealMoveRecord],
+    pieRuleState: 'stolen',
+    firstMoveIndex: targetIndex,
   };
 }

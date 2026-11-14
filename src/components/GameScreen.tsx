@@ -10,6 +10,7 @@ import {
   History,
   Home,
   Palette,
+  Repeat,
   RotateCcw,
   Sparkles,
   Trophy,
@@ -20,14 +21,19 @@ import {
   WifiOff,
   Zap,
 } from 'lucide-react';
-import { chooseAIMove } from '../ai/aiEngine';
+import { chooseAIMove, chooseAIPieRuleDecision } from '../ai/aiEngine';
 import { soundEngine } from '../audio/soundEngine';
-import { formatCoordLabel, TARGET_SCORE_EIGHT } from '../core/constants';
-import { hasRedMadeFirstMove, makeMove } from '../core/gameEngine';
+import {
+  formatCoordLabel,
+  TARGET_SCORE_EIGHT,
+  toCoord,
+} from '../core/constants';
+import { makeMove, resolvePieRuleDecision } from '../core/gameEngine';
 import {
   AudioSettings,
   CustomizationSettings,
   GameState,
+  PieRuleDecision,
   Player,
 } from '../core/types';
 import {
@@ -36,6 +42,7 @@ import {
   OnlineRoomData,
   restartOnlineMatch,
   submitOnlineMove,
+  submitOnlinePieRuleDecision,
   subscribeToOnlineRoom,
 } from '../online/onlineService';
 import { BoardView } from './BoardView';
@@ -105,6 +112,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     board,
     config,
     currentPlayer,
+    pieRuleState,
+    firstMoveIndex,
     scores,
     status,
     winner,
@@ -138,7 +147,22 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     config.opponentMode === 'ai' &&
     currentPlayer === config.aiPlayer;
 
-  const redHasMoved = hasRedMadeFirstMove(board);
+  const canLocalPlayerDecidePieRule =
+    status === 'playing' &&
+    pieRuleState === 'pending' &&
+    (isOnlineMode
+      ? onlineSession?.myColor === 'blue' && activeRoomStatus === 'playing'
+      : config.opponentMode === 'pvp'
+      ? true
+      : config.aiPlayer !== 'blue');
+
+  const firstMoveCoordLabel =
+    firstMoveIndex !== null
+      ? (() => {
+          const c = toCoord(firstMoveIndex);
+          return formatCoordLabel(c.row, c.col);
+        })()
+      : '';
 
   const roomId = onlineSession?.roomData.code ?? null;
 
@@ -239,6 +263,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
     aiTimerRef.current = window.setTimeout(() => {
       try {
+        if (gameState.pieRuleState === 'pending') {
+          const decision = chooseAIPieRuleDecision(
+            gameState,
+            config.aiDifficulty
+          );
+          const nextState = resolvePieRuleDecision(gameState, decision);
+          if (decision === 'steal') {
+            soundEngine.playPiecePlace('blue');
+          } else {
+            soundEngine.playMenuClick();
+          }
+          onUpdateGameState(nextState);
+          return;
+        }
+
         const aiCoord = chooseAIMove(gameState, config.aiDifficulty);
         const nextState = makeMove(gameState, aiCoord.row, aiCoord.col);
 
@@ -266,13 +305,93 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   }, [
     isAITurn,
     gameState.turnCount,
+    gameState.pieRuleState,
     gameState.status,
     config.aiDifficulty,
     config.aiPlayer,
   ]);
 
+  const handlePieRuleDecision = async (decision: PieRuleDecision) => {
+    if (
+      status !== 'playing' ||
+      pieRuleState !== 'pending' ||
+      isAIThinking ||
+      isSubmittingMove
+    ) {
+      return;
+    }
+
+    if (isOnlineMode && onlineSession) {
+      if (onlineSession.myColor !== 'blue') {
+        soundEngine.playInvalidMove();
+        setInvalidToast(
+          'Apenas o jogador Azul pode decidir sobre o Roubo de Peça!'
+        );
+        setTimeout(() => setInvalidToast(null), 2400);
+        return;
+      }
+
+      setIsSubmittingMove(true);
+      try {
+        const nextState = await submitOnlinePieRuleDecision(
+          onlineSession.roomData.code,
+          onlineSession.playerId,
+          decision
+        );
+
+        prevTurnCountRef.current = nextState.turnCount;
+        setOnlineRoom((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'playing',
+                gameState: nextState,
+              }
+            : prev
+        );
+
+        if (decision === 'steal') {
+          soundEngine.playPiecePlace('blue');
+        } else {
+          soundEngine.playMenuClick();
+        }
+        onUpdateGameState(nextState);
+      } catch (err: any) {
+        soundEngine.playInvalidMove();
+        setInvalidToast(
+          err?.message || 'Não foi possível registrar a decisão.'
+        );
+        setTimeout(() => setInvalidToast(null), 2600);
+      } finally {
+        setIsSubmittingMove(false);
+      }
+      return;
+    }
+
+    try {
+      const nextState = resolvePieRuleDecision(gameState, decision);
+      if (decision === 'steal') {
+        soundEngine.playPiecePlace('blue');
+      } else {
+        soundEngine.playMenuClick();
+      }
+      onUpdateGameState(nextState);
+    } catch {
+      soundEngine.playInvalidMove();
+    }
+  };
+
   const handleHumanCellClick = async (row: number, col: number) => {
     if (status !== 'playing' || isAIThinking || isAITurn || isSubmittingMove) {
+      return;
+    }
+
+    if (pieRuleState === 'pending') {
+      soundEngine.playInvalidMove();
+      setInvalidToast(
+        'Antes de jogar no tabuleiro, escolha entre "Continuar como Azul" ou "Roubar a primeira peça"!'
+      );
+      setTimeout(() => setInvalidToast(null), 2600);
       return;
     }
 
@@ -339,20 +458,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     }
   };
 
-  const handleInvalidCellClick = (row: number, col: number) => {
+  const handleInvalidCellClick = () => {
     soundEngine.playInvalidMove();
-    if (
-      currentPlayer === 'red' &&
-      !redHasMoved &&
-      row >= 3 &&
-      row <= 5 &&
-      col >= 3 &&
-      col <= 5
-    ) {
+    if (pieRuleState === 'pending') {
       setInvalidToast(
-        'O jogador Vermelho não pode realizar sua 1ª jogada no quadrado central 3×3! (Liberado a partir da 2ª jogada).'
+        'O jogador Azul deve escolher entre "Continuar como Azul" ou "Roubar a primeira peça" antes de jogar no tabuleiro!'
       );
-      setTimeout(() => setInvalidToast(null), 3200);
+      setTimeout(() => setInvalidToast(null), 2800);
     } else if (isOnlineMode && !isMyOnlineTurn) {
       setInvalidToast('Aguarde o turno do seu adversário online!');
       setTimeout(() => setInvalidToast(null), 2400);
@@ -484,9 +596,9 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               className="px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide text-white shadow-sm"
               style={{ backgroundColor: accentColor }}
             >
-              {config.ruleMode === 'regular'
-                ? 'Modo Regular'
-                : 'Modo Adjacente'}
+              {config.scoringMode === 'eight_points'
+                ? '8 Pontos'
+                : 'Modo Livre'}
             </span>
             <span
               className={`px-2.5 py-1 rounded-full text-xs font-extrabold border ${
@@ -495,9 +607,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   : 'bg-amber-50 border-amber-200 text-amber-800'
               }`}
             >
-              {config.scoringMode === 'eight_points'
-                ? 'Corrida 8 Pontos'
-                : 'Modo Livre (81 Casas)'}
+              Modo Adjacente • Roubo de Peça
             </span>
             {!isOnlineMode && (
               <span
@@ -720,11 +830,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               )}
 
               <div className="mt-2 text-[11px] font-semibold opacity-70 flex items-center justify-between">
-                <span>
-                  {redHasMoved
-                    ? 'Acesso livre ao centro 3×3'
-                    : '1ª jogada fora do centro 3×3'}
-                </span>
+                <span>1º a jogar • 81 casas livres</span>
                 <span>{scores.red} trincas</span>
               </div>
             </div>
@@ -750,6 +856,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 >
                   {isAIThinking
                     ? 'IA Pensando...'
+                    : pieRuleState === 'pending'
+                    ? 'Decisão: Roubo de Peça'
                     : isOnlineMode && onlineSession?.myColor === 'blue'
                     ? 'Sua Vez!'
                     : 'Jogando Agora'}
@@ -832,7 +940,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               )}
 
               <div className="mt-2 text-[11px] font-semibold opacity-70 flex items-center justify-between">
-                <span>Acesso livre ao centro 3×3</span>
+                <span>
+                  {pieRuleState === 'stolen'
+                    ? 'Roubou a 1ª peça • 81 casas'
+                    : pieRuleState === 'continued'
+                    ? 'Manteve como Azul • 81 casas'
+                    : '2º a jogar • Roubo de Peça'}
+                </span>
                 <span>{scores.blue} trincas</span>
               </div>
             </div>
@@ -863,6 +977,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 <span>
                   {isAIThinking
                     ? 'A IA está analisando o tabuleiro...'
+                    : pieRuleState === 'pending'
+                    ? canLocalPlayerDecidePieRule
+                      ? 'Escolha: Continuar como Azul ou Roubar a 1ª peça!'
+                      : 'Aguardando decisão do Azul sobre a 1ª peça...'
                     : isOnlineMode
                     ? isMyOnlineTurn
                       ? `Sua vez de jogar (${
@@ -925,8 +1043,115 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           </div>
         </div>
 
-        {/* Center Column: 9x9 Sentenaria Board */}
-        <div className="lg:col-span-6 flex flex-col items-center justify-center">
+        {/* Center Column: Pie Rule Decision Card (when pending) + 9x9 Sentenaria Board */}
+        <div className="lg:col-span-6 flex flex-col items-center justify-center gap-3">
+          {/* ROUBO DE PEÇA (PIE RULE) DECISION PANEL */}
+          {status === 'playing' && pieRuleState === 'pending' && (
+            <div
+              className={`w-full max-w-[560px] p-4 rounded-2xl border-2 transition-all animate-fade-in ${cardSurface}`}
+              style={{
+                borderColor: blueColor,
+                boxShadow: `0 6px 0 ${blueColor}55, 0 0 24px ${blueColor}22`,
+              }}
+            >
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-7 h-7 rounded-xl flex items-center justify-center text-white shrink-0"
+                    style={{ backgroundColor: blueColor }}
+                  >
+                    <Repeat className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <div
+                      className="text-xs sm:text-sm font-black uppercase tracking-wide font-display"
+                      style={{ color: blueColor }}
+                    >
+                      Decisão do Azul • Roubo de Peça
+                    </div>
+                    <div className="text-[11px] font-bold opacity-75">
+                      O Vermelho colocou a 1ª peça na casa{' '}
+                      <span className="font-mono font-black px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/10">
+                        {firstMoveCoordLabel}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider text-white shrink-0"
+                  style={{ backgroundColor: blueColor }}
+                >
+                  Única Vez
+                </span>
+              </div>
+
+              {canLocalPlayerDecidePieRule ? (
+                <>
+                  <p className="text-xs font-semibold opacity-85 mb-3">
+                    Como jogador <strong>Azul</strong>, escolha sua ação antes
+                    de prosseguir (sua identidade como Azul não muda):
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      disabled={isSubmittingMove}
+                      onClick={() => handlePieRuleDecision('continue')}
+                      className={`p-3 rounded-xl border-2 border-b-4 text-left transition-all active:translate-y-0.5 active:border-b-2 ${
+                        darkMode
+                          ? 'bg-[#252C44] border-[#384366] hover:bg-[#2C3552]'
+                          : 'bg-slate-50 border-slate-300 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="font-black text-xs sm:text-sm font-display flex items-center gap-1.5">
+                        <Check
+                          className="w-4 h-4 shrink-0"
+                          style={{ color: blueColor }}
+                        />
+                        <span>Continuar como Azul</span>
+                      </div>
+                      <p className="text-[11px] font-semibold opacity-75 mt-1">
+                        Mantém a 1ª peça vermelha intacta e realiza sua primeira
+                        jogada azul normalmente agora.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isSubmittingMove}
+                      onClick={() => handlePieRuleDecision('steal')}
+                      className="p-3 rounded-xl border-2 border-b-4 text-left text-white transition-all hover:brightness-105 active:translate-y-0.5 active:border-b-2"
+                      style={{
+                        backgroundColor: blueColor,
+                        borderColor: 'rgba(0,0,0,0.28)',
+                      }}
+                    >
+                      <div className="font-black text-xs sm:text-sm font-display flex items-center gap-1.5">
+                        <Repeat className="w-4 h-4 shrink-0" />
+                        <span>Roubar a primeira peça</span>
+                      </div>
+                      <p className="text-[11px] font-semibold text-white/90 mt-1">
+                        Converte a peça em {firstMoveCoordLabel} para azul sob
+                        seu controle e passa a vez ao Vermelho.
+                      </p>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="py-2 text-xs font-bold opacity-85 flex items-center gap-2">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full animate-ping shrink-0"
+                    style={{ backgroundColor: blueColor }}
+                  />
+                  <span>
+                    Aguardando o jogador Azul decidir entre{' '}
+                    <strong>Continuar como Azul</strong> ou{' '}
+                    <strong>Roubar a primeira peça</strong>...
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
           <BoardView
             board={board}
             currentPlayer={currentPlayer}
@@ -935,6 +1160,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             customization={customization}
             disabled={
               status !== 'playing' ||
+              pieRuleState === 'pending' ||
               isAIThinking ||
               isAITurn ||
               isSubmittingMove ||
@@ -964,15 +1190,15 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 <span>Histórico de Jogadas</span>
               </div>
               <span className="text-xs font-bold opacity-60">
-                {moveHistory.length} / 81
+                {moveHistory.length} ações
               </span>
             </div>
 
             {moveHistory.length === 0 ? (
               <div className="py-5 text-center text-xs font-semibold opacity-55">
                 Nenhuma jogada realizada ainda.
-                <br />A <strong>1ª jogada do Vermelho</strong> deve ser fora do
-                centro 3×3!
+                <br />O jogador <strong>Vermelho</strong> começa em qualquer uma
+                das 81 casas!
               </div>
             ) : (
               <div
@@ -1007,7 +1233,15 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                         </span>
                       </div>
 
-                      {move.pointsEarned > 0 ? (
+                      {move.isPieSteal ? (
+                        <span
+                          className="px-2 py-0.5 rounded-full text-[10px] font-black text-white flex items-center gap-0.5"
+                          style={{ backgroundColor: blueColor }}
+                        >
+                          <Repeat className="w-2.5 h-2.5" />
+                          ROUBOU 1ª PEÇA
+                        </span>
+                      ) : move.pointsEarned > 0 ? (
                         <span
                           className="px-2 py-0.5 rounded-full text-[10px] font-black text-white flex items-center gap-0.5"
                           style={{ backgroundColor: pColor }}
@@ -1031,17 +1265,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             <div className={`p-3.5 rounded-2xl border-2 text-xs ${cardSurface}`}>
               <div className="font-black uppercase tracking-wider opacity-70 mb-1.5 flex items-center gap-1.5">
                 <Award className="w-4 h-4" style={{ color: accentColor }} />
-                <span>
-                  Regra Ativa:{' '}
-                  {config.ruleMode === 'regular'
-                    ? 'Modo Regular'
-                    : 'Modo Adjacente'}
-                </span>
+                <span>Regras Ativas • Modo Adjacente</span>
               </div>
               <p className="font-semibold opacity-80 leading-relaxed">
-                {config.ruleMode === 'regular'
-                  ? 'Cada peça pode participar de apenas uma única trinca. Casas que já formaram trincas ficam bloqueadas para novas combinações.'
-                  : 'Você pode reutilizar 1 peça de uma trinca já formada para criar uma nova trinca adjacente, desde que pelo menos 2 das 3 casas sejam inéditas!'}
+                Você pode reutilizar 1 peça de uma trinca já formada como pivô
+                para criar uma nova trinca adjacente, desde que ao menos 2 das 3
+                casas sejam inéditas!
               </p>
             </div>
           )}
@@ -1144,11 +1373,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
             </div>
 
             <div className="text-xs font-bold opacity-70 mb-5 flex justify-center gap-4">
-              <span>Total de Turnos: {turnCount}</span>
+              <span>Total de Ações: {turnCount}</span>
               <span>•</span>
               <span>
-                Modo:{' '}
-                {config.ruleMode === 'regular' ? 'Regular' : 'Adjacente'}
+                Modalidade:{' '}
+                {config.scoringMode === 'eight_points'
+                  ? '8 Pontos'
+                  : 'Modo Livre'}
               </span>
             </div>
 

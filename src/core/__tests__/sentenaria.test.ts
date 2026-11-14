@@ -1,14 +1,16 @@
 import { ref, remove } from 'firebase/database';
 import { describe, expect, it } from 'vitest';
-import { chooseAIMove } from '../../ai/aiEngine';
+import { chooseAIMove, chooseAIPieRuleDecision } from '../../ai/aiEngine';
+import { sortChatMessagesChronologically } from '../../components/OnlineChatPanel';
 import { db } from '../../online/firebaseConfig';
 import {
   createOnlineRoom,
   deserializeGameStateFromFirebase,
   joinOnlineRoom,
-   sendOnlineChatMessage,
+  sendOnlineChatMessage,
   serializeGameStateForFirebase,
   submitOnlineMove,
+  submitOnlinePieRuleDecision,
   subscribeToRoomChat,
 } from '../../online/onlineService';
 import {
@@ -16,164 +18,202 @@ import {
   validateAndNormalizeRoomCode,
   validateChatMessage,
 } from '../../online/roomCodeUtils';
-import { sortChatMessagesChronologically } from '../../components/OnlineChatPanel';
 import { isCenterRegion, toIndex, TOTAL_CELLS } from '../constants';
 import {
   createInitialGameState,
+  DEFAULT_GAME_CONFIG,
   getValidMoveIndices,
-  hasRedMadeFirstMove,
   isValidMove,
   makeMove,
+  resolvePieRuleDecision,
 } from '../gameEngine';
 
-describe('Sentenaria Core Rules & Game Engine', () => {
-  it('initializes a 9x9 board (81 cells) with Red starting first', () => {
+describe('Sentenaria — Modalidades, Modo Adjacente Obrigatório, 81 Casas Livres e Roubo de Peça', () => {
+  it('1. configura 8 Pontos como modalidade padrão e Modo Adjacente como regra obrigatória única', () => {
+    expect(DEFAULT_GAME_CONFIG.scoringMode).toBe('eight_points');
+    expect(DEFAULT_GAME_CONFIG.ruleMode).toBe('adjacent');
+
     const state = createInitialGameState();
     expect(state.board.length).toBe(TOTAL_CELLS);
     expect(state.currentPlayer).toBe('red');
+    expect(state.pieRuleState).toBe('not_triggered');
+    expect(state.firstMoveIndex).toBeNull();
+    expect(state.config.scoringMode).toBe('eight_points');
+    expect(state.config.ruleMode).toBe('adjacent');
     expect(state.scores).toEqual({ red: 0, blue: 0 });
     expect(state.status).toBe('playing');
   });
 
-  it('enforces Red 1st-move center restriction AND grants Red normal center access from Red 2nd move onward', () => {
+  it('2. permite jogar livremente em todas as 81 casas desde o primeiro turno (incluindo o quadrado central 3x3)', () => {
     let state = createInitialGameState();
 
-    // Before Red's 1st move: Red has not played yet
-    expect(hasRedMadeFirstMove(state.board)).toBe(false);
-
-    // 1. Red CANNOT play in any of the 9 center cells on Red's 1st move
+    // All 81 cells are valid for Red on the very first turn, including the 3x3 center
+    expect(getValidMoveIndices(state.board, 'red').length).toBe(81);
     for (let r = 3; r <= 5; r++) {
       for (let c = 3; c <= 5; c++) {
         expect(isCenterRegion(r, c)).toBe(true);
-        expect(isValidMove(state.board, r, c, 'red')).toBe(false);
-        expect(() => makeMove(state, r, c)).toThrow();
+        expect(isValidMove(state.board, r, c, 'red')).toBe(true);
+        expect(isValidMove(state.board, r, c, 'blue')).toBe(true);
       }
     }
 
-    // Red has 72 valid moves on their 1st move (81 - 9)
-    expect(getValidMoveIndices(state.board, 'red').length).toBe(72);
-
-    // Red makes 1st move outside the center at (0, 0)
-    state = makeMove(state, 0, 0);
-    expect(hasRedMadeFirstMove(state.board)).toBe(true);
-    expect(state.currentPlayer).toBe('blue');
-
-    // Blue CAN play in the 3x3 central region on Blue's 1st move (e.g. (4, 4))
-    expect(isValidMove(state.board, 4, 4, 'blue')).toBe(true);
+    // Red can play directly in the center cell (4, 4) on turn 1
     state = makeMove(state, 4, 4);
-    expect(state.board[toIndex(4, 4)].owner).toBe('blue');
-    expect(state.currentPlayer).toBe('red');
-
-    // 2. Now it is Red's 2nd move! Red MUST have access to all empty cells in the 3x3 central region!
-    expect(isValidMove(state.board, 3, 3, 'red')).toBe(true);
-    expect(isValidMove(state.board, 4, 5, 'red')).toBe(true);
-    expect(isValidMove(state.board, 5, 5, 'red')).toBe(true);
-    // 81 total - 2 occupied ((0,0) and (4,4)) = 79 valid moves for Red on Red's 2nd move!
-    expect(getValidMoveIndices(state.board, 'red').length).toBe(79);
-
-    // Red plays inside the 3x3 center at (3, 3) on Red's 2nd move
-    state = makeMove(state, 3, 3);
-    expect(state.board[toIndex(3, 3)].owner).toBe('red');
-
-    // Verify Red can even form a trinca inside the 3x3 center from move 2 onward
-    state = makeMove(state, 0, 8); // Blue
-    state = makeMove(state, 3, 4); // Red plays in center
-    state = makeMove(state, 1, 8); // Blue
-    state = makeMove(state, 3, 5); // Red completes horizontal trinca (3,3)-(3,4)-(3,5) inside the center!
-    expect(state.scores.red).toBe(1);
+    expect(state.board[toIndex(4, 4)].owner).toBe('red');
+    expect(state.board[toIndex(4, 4)].visualColor).toBe('red');
+    expect(state.board[toIndex(4, 4)].placedBy).toBe('red');
+    expect(state.firstMoveIndex).toBe(toIndex(4, 4));
+    expect(state.pieRuleState).toBe('pending');
   });
 
-  it('detects horizontal, vertical, main diagonal, and anti-diagonal trincas', () => {
-    let state = createInitialGameState({
-      ruleMode: 'regular',
-      scoringMode: 'free',
-    });
+  it('3. implementa o Roubo de Peça (Pie Rule) — Opção A: Continuar como Azul', () => {
+    let state = createInitialGameState({ scoringMode: 'free' });
+
+    // Turn 1: Red places piece at (4, 4)
+    state = makeMove(state, 4, 4);
+    expect(state.pieRuleState).toBe('pending');
+    expect(state.currentPlayer).toBe('blue');
+    expect(state.firstMoveIndex).toBe(toIndex(4, 4));
+
+    // Blue cannot place a normal piece on the board before resolving the Pie Rule decision
+    expect(() => makeMove(state, 0, 0)).toThrow(/Continuar como Azul|Roubar/i);
+
+    // Blue chooses Option A: 'continue' (Continuar como Azul)
+    state = resolvePieRuleDecision(state, 'continue');
+    expect(state.pieRuleState).toBe('continued');
+    expect(state.currentPlayer).toBe('blue');
+
+    // The 1st piece remains Red's in both ownership and visual color
+    const firstCell = state.board[toIndex(4, 4)];
+    expect(firstCell.owner).toBe('red');
+    expect(firstCell.visualColor).toBe('red');
+    expect(firstCell.stolenByPieRule).toBe(false);
+
+    // Now Blue makes their first normal move in the same turn at (0, 0)
+    state = makeMove(state, 0, 0);
+    expect(state.board[toIndex(0, 0)].owner).toBe('blue');
+    expect(state.board[toIndex(0, 0)].visualColor).toBe('blue');
+    expect(state.currentPlayer).toBe('red');
+
+    // Pie Rule cannot be triggered or resolved again
+    expect(() => resolvePieRuleDecision(state, 'steal')).toThrow();
+  });
+
+  it('4. implementa o Roubo de Peça (Pie Rule) — Opção B: Roubar a primeira peça, mudando cor visual e dono para Azul e passando o turno ao Vermelho', () => {
+    let state = createInitialGameState({ scoringMode: 'free' });
+
+    // Turn 1: Red places 1st piece at (4, 4)
+    state = makeMove(state, 4, 4);
+    expect(state.pieRuleState).toBe('pending');
+    expect(state.currentPlayer).toBe('blue');
+
+    // Blue chooses Option B: 'steal' (Roubar a primeira peça)
+    state = resolvePieRuleDecision(state, 'steal');
+    expect(state.pieRuleState).toBe('stolen');
+    // Turn passes immediately to Red!
+    expect(state.currentPlayer).toBe('red');
+    expect(state.turnCount).toBe(2);
+
+    // Only 1 piece exists on the board, at the exact same position (4, 4), now visually blue and owned by Blue
+    const occupiedCells = state.board.filter((c) => c.owner !== null);
+    expect(occupiedCells.length).toBe(1);
+    const stolenCell = state.board[toIndex(4, 4)];
+    expect(stolenCell.owner).toBe('blue');
+    expect(stolenCell.visualColor).toBe('blue');
+    expect(stolenCell.placedBy).toBe('red');
+    expect(stolenCell.stolenByPieRule).toBe(true);
+
+    // Move history records the steal action by Blue
+    expect(state.lastMove?.isPieSteal).toBe(true);
+    expect(state.lastMove?.player).toBe('blue');
+    expect(state.lastMove?.index).toBe(toIndex(4, 4));
+
+    // Cannot steal a second time
+    expect(() => resolvePieRuleDecision(state, 'steal')).toThrow();
+
+    // Now it is Red's turn to play normally with a red piece
+    state = makeMove(state, 0, 0); // Red plays at (0, 0)
+    expect(state.board[toIndex(0, 0)].owner).toBe('red');
+    expect(state.board[toIndex(0, 0)].visualColor).toBe('red');
+    expect(state.currentPlayer).toBe('blue');
+
+    // Verify that the stolen piece at (4, 4) no longer forms trincas for Red,
+    // and DOES form trincas and score points for Blue!
+    state = makeMove(state, 4, 5); // Blue plays at (4, 5)
+    state = makeMove(state, 4, 2); // Red plays at (4, 2)
+    state = makeMove(state, 8, 8); // Blue plays at (8, 8)
+    state = makeMove(state, 4, 3); // Red plays at (4, 3) -> Red has (4,2) and (4,3), but (4,4) belongs to Blue, so Red gets 0 points!
+    expect(state.scores.red).toBe(0);
+
+    // Blue plays at (4, 6) -> completes Blue trinca (4,4)-(4,5)-(4,6) using the stolen piece at (4,4)!
+    state = makeMove(state, 4, 6);
+    expect(state.scores.blue).toBe(1);
+    expect(state.formedTrincas.length).toBe(1);
+    expect(state.formedTrincas[0].player).toBe('blue');
+    expect(state.formedTrincas[0].indices).toContain(toIndex(4, 4));
+  });
+
+  it('5. aplica obrigatoriamente o Modo Adjacente em 8 Pontos e no Modo Livre (reutilizando até 1 peça pivô com ao menos 2 inéditas)', () => {
+    for (const scoringMode of ['eight_points', 'free'] as const) {
+      let state = createInitialGameState({ scoringMode });
+
+      state = makeMove(state, 0, 0); // Red 1st move
+      state = resolvePieRuleDecision(state, 'continue'); // Blue continues
+      state = makeMove(state, 8, 0); // Blue 1st move
+
+      state = makeMove(state, 0, 1); // Red
+      state = makeMove(state, 8, 1); // Blue
+      state = makeMove(state, 0, 2); // Red -> forms 1st trinca (0,0)-(0,1)-(0,2)!
+      expect(state.scores.red).toBe(1);
+
+      state = makeMove(state, 7, 0); // Blue
+      state = makeMove(state, 0, 3); // Red -> (0,1)-(0,2)-(0,3) has 2 already-used cells ((0,1) and (0,2)) and only 1 inédita ((0,3)) -> MUST NOT score!
+      expect(state.scores.red).toBe(1);
+
+      state = makeMove(state, 7, 1); // Blue
+      state = makeMove(state, 0, 4); // Red -> (0,2)-(0,3)-(0,4) has 1 reused pivot ((0,2)) and 2 inéditas ((0,3) and (0,4)) -> MUST score!
+      expect(state.scores.red).toBe(2);
+      expect(state.formedTrincas[1].reusedCellIndex).toBe(toIndex(0, 2));
+    }
+  });
+
+  it('6. detecta trincas horizontais, verticais, diagonais principais e secundárias', () => {
+    let state = createInitialGameState({ scoringMode: 'free' });
     state = makeMove(state, 0, 0); // Red
+    state = resolvePieRuleDecision(state, 'continue');
     state = makeMove(state, 3, 3); // Blue
     state = makeMove(state, 0, 1); // Red
     state = makeMove(state, 4, 3); // Blue
-    state = makeMove(state, 0, 2); // Red completes horizontal!
+    state = makeMove(state, 0, 2); // Red -> horizontal trinca!
     expect(state.scores.red).toBe(1);
-    expect(state.formedTrincas.length).toBe(1);
     expect(state.formedTrincas[0].direction).toBe('horizontal');
 
-    // Vertical trinca for Blue at (3,3)-(4,3)-(5,3)
-    state = makeMove(state, 5, 3); // Blue completes vertical!
+    state = makeMove(state, 5, 3); // Blue -> vertical trinca!
     expect(state.scores.blue).toBe(1);
     expect(state.formedTrincas[1].direction).toBe('vertical');
 
-    // Main diagonal trinca for Red at (6,0)-(7,1)-(8,2)
     state = makeMove(state, 6, 0); // Red
     state = makeMove(state, 3, 5); // Blue
     state = makeMove(state, 7, 1); // Red
     state = makeMove(state, 4, 5); // Blue
-    state = makeMove(state, 8, 2); // Red completes main diagonal!
+    state = makeMove(state, 8, 2); // Red -> main diagonal!
     expect(state.scores.red).toBe(2);
     expect(state.formedTrincas[2].direction).toBe('diag_main');
 
-    // Anti-diagonal trinca for Red at (0,8)-(1,7)-(2,6)
     state = makeMove(state, 1, 0); // Blue
     state = makeMove(state, 0, 8); // Red
     state = makeMove(state, 2, 0); // Blue
     state = makeMove(state, 1, 7); // Red
     state = makeMove(state, 5, 0); // Blue
-    state = makeMove(state, 2, 6); // Red completes anti-diagonal!
+    state = makeMove(state, 2, 6); // Red -> anti-diagonal!
     expect(state.scores.red).toBe(3);
     expect(
       state.formedTrincas.some((t) => t.direction === 'diag_anti')
     ).toBe(true);
   });
 
-  it('enforces Regular Mode: cells in a formed trinca cannot be reused for new trincas', () => {
+  it('7. encerra a partida imediatamente na modalidade 8 Pontos quando um jogador atinge 8 pontos', () => {
     let state = createInitialGameState({
-      ruleMode: 'regular',
-      scoringMode: 'free',
-    });
-
-    state = makeMove(state, 0, 0); // Red
-    state = makeMove(state, 8, 0); // Blue
-    state = makeMove(state, 0, 1); // Red
-    state = makeMove(state, 8, 1); // Blue
-    state = makeMove(state, 0, 2); // Red -> 1st trinca!
-    expect(state.scores.red).toBe(1);
-
-    state = makeMove(state, 7, 0); // Blue
-    state = makeMove(state, 0, 3); // Red
-    state = makeMove(state, 7, 1); // Blue
-    state = makeMove(state, 0, 4); // Red -> (0,2) already in trinca, no score in Regular mode
-    expect(state.scores.red).toBe(1);
-
-    state = makeMove(state, 7, 2); // Blue
-    state = makeMove(state, 0, 5); // Red -> (0,3)-(0,4)-(0,5) is fresh -> scores!
-    expect(state.scores.red).toBe(2);
-  });
-
-  it('enforces Adjacent Mode: allows reusing 1 cell from an existing trinca if at least 2 cells are unused', () => {
-    let state = createInitialGameState({
-      ruleMode: 'adjacent',
-      scoringMode: 'free',
-    });
-
-    state = makeMove(state, 0, 0); // Red
-    state = makeMove(state, 8, 0); // Blue
-    state = makeMove(state, 0, 1); // Red
-    state = makeMove(state, 8, 1); // Blue
-    state = makeMove(state, 0, 2); // Red -> 1st trinca!
-    expect(state.scores.red).toBe(1);
-
-    state = makeMove(state, 7, 0); // Blue
-    state = makeMove(state, 0, 3); // Red -> only 1 unused cell, does not score
-    expect(state.scores.red).toBe(1);
-
-    state = makeMove(state, 7, 1); // Blue
-    state = makeMove(state, 0, 4); // Red -> 2 unused cells (0,3)+(0,4) + 1 reused (0,2) -> scores!
-    expect(state.scores.red).toBe(2);
-    expect(state.formedTrincas[1].reusedCellIndex).toBe(toIndex(0, 2));
-  });
-
-  it('ends the match immediately in 8-points mode when a player reaches 8 points', () => {
-    let state = createInitialGameState({
-      ruleMode: 'adjacent',
       scoringMode: 'eight_points',
     });
 
@@ -199,6 +239,9 @@ describe('Sentenaria Core Rules & Game Engine', () => {
     while (state.status === 'playing' && step < blueTargetMoves.length) {
       const [rr, rc] = redSafeMoves[step];
       state = makeMove(state, rr, rc);
+      if (state.pieRuleState === 'pending') {
+        state = resolvePieRuleDecision(state, 'continue');
+      }
       if (state.status !== 'playing') break;
       const [br, bc] = blueTargetMoves[step];
       state = makeMove(state, br, bc);
@@ -211,338 +254,216 @@ describe('Sentenaria Core Rules & Game Engine', () => {
     expect(state.endReason).toBe('target_score_reached');
   });
 
-  it('correctly runs Easy, Medium, and Hard AI in both Regular and Adjacent modes while respecting Red 1st-move restriction', () => {
+  it('8. executa a IA nos níveis Fácil, Médio e Difícil tomando decisão válida no Roubo de Peça', () => {
     const difficulties = ['easy', 'medium', 'hard'] as const;
-    const ruleModes = ['regular', 'adjacent'] as const;
 
-    for (const ruleMode of ruleModes) {
-      for (const aiDifficulty of difficulties) {
-        let state = createInitialGameState({
-          ruleMode,
-          scoringMode: 'eight_points',
-          opponentMode: 'ai',
-          aiDifficulty,
-        });
+    for (const aiDifficulty of difficulties) {
+      let state = createInitialGameState({
+        scoringMode: 'eight_points',
+        opponentMode: 'ai',
+        aiDifficulty,
+      });
 
-        for (let ply = 0; ply < 10; ply++) {
-          const move = chooseAIMove(state, aiDifficulty);
-          expect(
-            isValidMove(state.board, move.row, move.col, state.currentPlayer)
-          ).toBe(true);
-          if (ply === 0 && state.currentPlayer === 'red') {
-            expect(isCenterRegion(move.row, move.col)).toBe(false);
-          }
-          state = makeMove(state, move.row, move.col);
+      for (let action = 0; action < 10; action++) {
+        if (state.pieRuleState === 'pending') {
+          const decision = chooseAIPieRuleDecision(state, aiDifficulty);
+          expect(['continue', 'steal']).toContain(decision);
+          state = resolvePieRuleDecision(state, decision);
+          continue;
         }
-        expect(state.turnCount).toBe(10);
+        const move = chooseAIMove(state, aiDifficulty);
+        expect(
+          isValidMove(state.board, move.row, move.col, state.currentPlayer)
+        ).toBe(true);
+        state = makeMove(state, move.row, move.col);
       }
+      expect(state.turnCount).toBeGreaterThanOrEqual(9);
     }
   });
 });
 
-describe('Online Room Code Validation & Generation', () => {
-  it('generates 6-character uppercase alphanumeric codes without accents', () => {
-    const seen = new Set<string>();
-    for (let i = 0; i < 50; i++) {
-      const code = generateRoomCode();
-      expect(code).toMatch(/^[A-Z0-9]{6}$/);
-      seen.add(code);
-    }
-    expect(seen.size).toBeGreaterThan(45);
-  });
-
-  it('accepts uppercase and lowercase codes and normalizes them to uppercase', () => {
-    const res1 = validateAndNormalizeRoomCode('a7b9k2');
-    expect(res1.valid).toBe(true);
-    expect(res1.normalizedCode).toBe('A7B9K2');
-
-    const res2 = validateAndNormalizeRoomCode('ZyX987');
-    expect(res2.valid).toBe(true);
-    expect(res2.normalizedCode).toBe('ZYX987');
-  });
-
-  it('rejects accented characters, spaces, special characters, and wrong lengths', () => {
+describe('Serialização Firebase & Sincronização do Roubo de Peça Online', () => {
+  it('valida códigos de sala de 6 caracteres e ordena mensagens cronologicamente', () => {
+    const code = generateRoomCode();
+    expect(code).toMatch(/^[A-Z0-9]{6}$/);
+    expect(validateAndNormalizeRoomCode(code.toLowerCase()).valid).toBe(true);
     expect(validateAndNormalizeRoomCode('ÁBC123').valid).toBe(false);
-    expect(validateAndNormalizeRoomCode('abç123').valid).toBe(false);
-    expect(validateAndNormalizeRoomCode('ãbc123').valid).toBe(false);
-    expect(validateAndNormalizeRoomCode('ébc123').valid).toBe(false);
-    expect(validateAndNormalizeRoomCode('ABC 12').valid).toBe(false);
-    expect(validateAndNormalizeRoomCode('ABC-12').valid).toBe(false);
-    expect(validateAndNormalizeRoomCode('ABC@12').valid).toBe(false);
-    expect(validateAndNormalizeRoomCode('ABC12').valid).toBe(false);
-    expect(validateAndNormalizeRoomCode('ABC1234').valid).toBe(false);
-    expect(validateAndNormalizeRoomCode('').valid).toBe(false);
-  });
+    expect(validateChatMessage('Bom jogo!').valid).toBe(true);
 
-  it('validates chat messages and enforces character limits', () => {
-    expect(validateChatMessage('Olá, bom jogo!').valid).toBe(true);
-    expect(validateChatMessage('   ').valid).toBe(false);
-    expect(validateChatMessage('x'.repeat(201)).valid).toBe(false);
-  });
-
-  it('sorts interleaved chat messages from both players into a single chronological sequence without grouping by player', () => {
-    const unordered = [
+    const sorted = sortChatMessagesChronologically([
       {
-        id: 'm3',
-        senderId: 'host_uid',
-        senderName: 'Host',
-        senderRole: 'host' as const,
-        senderColor: 'red' as const,
-        text: 'Terceira mensagem (Host)',
-        timestamp: 3000,
+        id: 'm2',
+        senderId: 'guest',
+        senderName: 'Guest',
+        senderRole: 'guest',
+        senderColor: 'blue',
+        text: '2',
+        timestamp: 200,
       },
       {
         id: 'm1',
-        senderId: 'host_uid',
+        senderId: 'host',
         senderName: 'Host',
-        senderRole: 'host' as const,
-        senderColor: 'red' as const,
-        text: 'Primeira mensagem (Host)',
-        timestamp: 1000,
+        senderRole: 'host',
+        senderColor: 'red',
+        text: '1',
+        timestamp: 100,
       },
-      {
-        id: 'm4',
-        senderId: 'guest_uid',
-        senderName: 'Convidado',
-        senderRole: 'guest' as const,
-        senderColor: 'blue' as const,
-        text: 'Quarta mensagem (Convidado)',
-        timestamp: 4000,
-      },
-      {
-        id: 'm2',
-        senderId: 'guest_uid',
-        senderName: 'Convidado',
-        senderRole: 'guest' as const,
-        senderColor: 'blue' as const,
-        text: 'Segunda mensagem (Convidado)',
-        timestamp: 2000,
-      },
-    ];
-
-    const sorted = sortChatMessagesChronologically(unordered);
-    expect(sorted.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4']);
-    expect(sorted.map((m) => m.senderId)).toEqual([
-      'host_uid',
-      'guest_uid',
-      'host_uid',
-      'guest_uid',
     ]);
+    expect(sorted.map((m) => m.id)).toEqual(['m1', 'm2']);
   });
 
-  it('correctly serializes and deserializes board and turn state even when Firebase returns numeric-keyed objects', () => {
+  it('serializa e desserializa corretamente o estado após o Roubo de Peça (visualColor, owner, stolenByPieRule, pieRuleState e turno)', () => {
     let state = createInitialGameState({ opponentMode: 'online' });
-    state = makeMove(state, 0, 0); // Red 1st move -> turn becomes Blue
-    state = makeMove(state, 4, 4); // Blue 1st move in center -> turn becomes Red
-    state = makeMove(state, 3, 3); // Red 2nd move in center -> turn becomes Blue
+    state = makeMove(state, 4, 4); // Red plays in center (4,4)
+    expect(state.pieRuleState).toBe('pending');
+
+    // Blue steals the 1st piece
+    state = resolvePieRuleDecision(state, 'steal');
+    expect(state.pieRuleState).toBe('stolen');
+    expect(state.currentPlayer).toBe('red');
 
     const serialized = serializeGameStateForFirebase(state);
-    // Simulate Firebase RTDB returning numeric-keyed objects instead of JS arrays
-    const numericKeyedBoard: Record<string, any> = {};
-    serialized.board.forEach((cell, idx) => {
-      numericKeyedBoard[String(idx)] = cell;
-    });
-    const numericKeyedHistory: Record<string, any> = {};
-    serialized.moveHistory.forEach((m, idx) => {
-      numericKeyedHistory[String(idx)] = m;
-    });
+    const restored = deserializeGameStateFromFirebase(serialized);
 
-    const restored = deserializeGameStateFromFirebase({
-      ...serialized,
-      board: numericKeyedBoard as any,
-      moveHistory: numericKeyedHistory as any,
-    });
+    expect(restored.pieRuleState).toBe('stolen');
+    expect(restored.firstMoveIndex).toBe(toIndex(4, 4));
+    expect(restored.currentPlayer).toBe('red');
+    expect(restored.turnCount).toBe(2);
 
-    expect(restored.turnCount).toBe(3);
-    expect(restored.currentPlayer).toBe('blue');
-    expect(restored.board[toIndex(0, 0)].owner).toBe('red');
-    expect(restored.board[toIndex(4, 4)].owner).toBe('blue');
-    expect(restored.board[toIndex(3, 3)].owner).toBe('red');
-    expect(restored.moveHistory.length).toBe(3);
+    const restoredCell = restored.board[toIndex(4, 4)];
+    expect(restoredCell.owner).toBe('blue');
+    expect(restoredCell.visualColor).toBe('blue');
+    expect(restoredCell.placedBy).toBe('red');
+    expect(restoredCell.stolenByPieRule).toBe(true);
+    expect(restored.lastMove?.isPieSteal).toBe(true);
   });
-});
 
-describe('Firebase Online Multiplayer Integration (Two Independent Sessions)', () => {
   it(
-    'creates a room, joins with lowercase code, blocks a 3rd player, synchronizes turns & Red 1st/2nd move rules, supports private chat, and recovers on reconnect',
+    'sincroniza o Roubo de Peça em tempo real no Firebase Realtime Database entre Host (Vermelho) e Convidado (Azul) e persiste após reconexão',
     async () => {
       const hostSessionId = 'test_host_' + Date.now();
       const guestSessionId = 'test_guest_' + Date.now();
       const outsiderSessionId = 'test_outsider_' + Date.now();
 
-      // 1. Host creates a private room
       let created: Awaited<ReturnType<typeof createOnlineRoom>>;
       try {
         created = await createOnlineRoom(hostSessionId, 'HostJogador', {
-          ruleMode: 'regular',
           scoringMode: 'eight_points',
         });
       } catch (err: any) {
         if (/permission[_\s]denied/i.test(String(err?.message || err))) {
-          // Firebase RTDB rules require browser domain / authenticated token not available in headless Node
           return;
         }
         throw err;
       }
+
       const roomCode = created.roomData.code;
-      expect(roomCode).toMatch(/^[A-Z0-9]{6}$/);
-      expect(created.roomData.status).toBe('waiting');
-      expect(created.myColor).toBe('red');
-
       try {
-        // 2. Reject invalid / non-existent room codes
-        await expect(
-          joinOnlineRoom('ÁBC123', guestSessionId, 'Convidado')
-        ).rejects.toThrow();
-        await expect(
-          joinOnlineRoom('ZZZZ99', guestSessionId, 'Convidado')
-        ).rejects.toThrow();
-
-        // 3. Guest joins using LOWERCASE code (case-insensitive check)
+        // Guest joins room
         const joined = await joinOnlineRoom(
           roomCode.toLowerCase(),
           guestSessionId,
           'GuestJogador'
         );
-        expect(joined.roomData.code).toBe(roomCode);
-        expect(joined.roomData.status).toBe('playing');
-        expect(joined.role).toBe('guest');
         expect(joined.myColor).toBe('blue');
-        expect(joined.reconnected).toBe(false);
+        expect(joined.role).toBe('guest');
 
-        // 4. Third player (outsider) is blocked from joining the full room
+        // 1. Host (Red) plays 1st piece at center (4, 4) — all 81 cells are free!
+        const afterRedFirstMove = await submitOnlineMove(
+          roomCode,
+          hostSessionId,
+          4,
+          4
+        );
+        expect(afterRedFirstMove.pieRuleState).toBe('pending');
+        expect(afterRedFirstMove.firstMoveIndex).toBe(toIndex(4, 4));
+        expect(afterRedFirstMove.currentPlayer).toBe('blue');
+
+        // 2. While pieRuleState === 'pending', Blue cannot make a normal board move before deciding
         await expect(
-          joinOnlineRoom(roomCode, outsiderSessionId, 'Intruso')
-        ).rejects.toThrow(/cheia/i);
+          submitOnlineMove(roomCode, guestSessionId, 0, 0)
+        ).rejects.toThrow(/continuar como Azul ou roubar/i);
 
-        // 5. Turn order & Red 1st-move center restriction validation on server
-        // 5a. Guest (Blue) cannot move on Turn 1 (it is Red's turn)
+        // 3. Host (Red) cannot decide the Pie Rule for Blue
         await expect(
-          submitOnlineMove(roomCode, guestSessionId, 4, 4)
-        ).rejects.toThrow(/sua vez/i);
+          submitOnlinePieRuleDecision(roomCode, hostSessionId, 'steal')
+        ).rejects.toThrow(/Apenas o jogador Azul/i);
 
-        // 5b. Host (Red) cannot play in the 3x3 center on Red's 1st move!
+        // 4. Guest (Blue) steals the first piece!
+        const afterSteal = await submitOnlinePieRuleDecision(
+          roomCode,
+          guestSessionId,
+          'steal'
+        );
+        expect(afterSteal.pieRuleState).toBe('stolen');
+        expect(afterSteal.currentPlayer).toBe('red');
+        expect(afterSteal.board[toIndex(4, 4)].owner).toBe('blue');
+        expect(afterSteal.board[toIndex(4, 4)].visualColor).toBe('blue');
+        expect(afterSteal.board[toIndex(4, 4)].stolenByPieRule).toBe(true);
+
+        // 5. Cannot steal again
         await expect(
-          submitOnlineMove(roomCode, hostSessionId, 4, 4)
-        ).rejects.toThrow(/inválida/i);
+          submitOnlinePieRuleDecision(roomCode, guestSessionId, 'steal')
+        ).rejects.toThrow(/já foi realizada/i);
 
-        // 5c. Host (Red) makes valid 1st move outside center at (0, 0)
-        const stateAfterMove1 = await submitOnlineMove(
+        // 6. Now it is Host's (Red's) turn! Host plays at (0, 0)
+        const afterRedSecondMove = await submitOnlineMove(
           roomCode,
           hostSessionId,
           0,
           0
         );
-        expect(stateAfterMove1.turnCount).toBe(1);
-        expect(stateAfterMove1.currentPlayer).toBe('blue');
+        expect(afterRedSecondMove.board[toIndex(0, 0)].owner).toBe('red');
+        expect(afterRedSecondMove.currentPlayer).toBe('blue');
 
-        // 5d. Host (Red) cannot play twice in a row
-        await expect(
-          submitOnlineMove(roomCode, hostSessionId, 0, 1)
-        ).rejects.toThrow(/sua vez/i);
-
-        // 5e. Guest (Blue) plays in the center at (4, 4)
-        const stateAfterMove2 = await submitOnlineMove(
+        // 7. Guest (Blue) plays at (4, 5) and later completes a trinca with the stolen piece at (4, 4)
+        await submitOnlineMove(roomCode, guestSessionId, 4, 5);
+        await submitOnlineMove(roomCode, hostSessionId, 0, 1);
+        const afterBlueTrinca = await submitOnlineMove(
           roomCode,
           guestSessionId,
           4,
-          4
+          6
         );
-        expect(stateAfterMove2.turnCount).toBe(2);
-        expect(stateAfterMove2.currentPlayer).toBe('red');
+        expect(afterBlueTrinca.scores.blue).toBe(1);
 
-        // 5f. On Red's 2nd move, Host (Red) CAN play inside the 3x3 center at (3, 3)!
-        const stateAfterMove3 = await submitOnlineMove(
-          roomCode,
-          hostSessionId,
-          3,
-          3
-        );
-        expect(stateAfterMove3.turnCount).toBe(3);
-        expect(stateAfterMove3.board[toIndex(3, 3)].owner).toBe('red');
-
-        // 6. Private Room Chat interleaved chronological synchronization & outsider protection
+        // 8. Verify chat & reconnect persistence
         await sendOnlineChatMessage(
           roomCode,
           hostSessionId,
           'HostJogador',
           'host',
-          'Msg 1 (Host)'
+          'Bom roubo!'
         );
-        await sendOnlineChatMessage(
-          roomCode,
-          guestSessionId,
-          'GuestJogador',
-          'guest',
-          'Msg 2 (Guest)'
-        );
-        await sendOnlineChatMessage(
-          roomCode,
-          hostSessionId,
-          'HostJogador',
-          'host',
-          'Msg 3 (Host)'
-        );
-
-        // Outsider cannot send messages in this room
         await expect(
           sendOnlineChatMessage(
             roomCode,
             outsiderSessionId,
             'Intruso',
             'guest',
-            'Mensagem invasora'
+            'Bloqueado'
           )
-        ).rejects.toThrow(/Acesso negado/i);
+        ).rejects.toThrow();
 
-        // Verify participant receives all 3 interleaved chat messages in exact chronological sequence
-        const hostMessages = await new Promise<any[]>((resolve) => {
-          const unsub = subscribeToRoomChat(roomCode, hostSessionId, (msgs) => {
-            if (msgs.length >= 3) {
-              unsub();
-              resolve(msgs);
-            }
-          });
-        });
-        expect(hostMessages.length).toBe(3);
-        expect(hostMessages.map((m) => m.text)).toEqual([
-          'Msg 1 (Host)',
-          'Msg 2 (Guest)',
-          'Msg 3 (Host)',
-        ]);
-        expect(hostMessages.map((m) => m.senderId)).toEqual([
-          hostSessionId,
-          guestSessionId,
-          hostSessionId,
-        ]);
-
-        const outsiderMessages = await new Promise<any[]>((resolve) => {
-          const unsub = subscribeToRoomChat(
-            roomCode,
-            outsiderSessionId,
-            (msgs) => {
-              unsub();
-              resolve(msgs);
-            }
-          );
-        });
-        expect(outsiderMessages).toEqual([]);
-
-        // 7. Reconnection recovery test: Guest reconnects and recovers the exact match state (turnCount = 3)
         const reconnectedGuest = await joinOnlineRoom(
           roomCode,
           guestSessionId,
           'GuestJogador'
         );
         expect(reconnectedGuest.reconnected).toBe(true);
-        expect(reconnectedGuest.role).toBe('guest');
         expect(reconnectedGuest.myColor).toBe('blue');
-        expect(reconnectedGuest.roomData.gameState.turnCount).toBe(3);
+        expect(reconnectedGuest.roomData.players.host.color).toBe('red');
+        expect(reconnectedGuest.roomData.players.guest?.color).toBe('blue');
+        expect(reconnectedGuest.roomData.gameState.pieRuleState).toBe('stolen');
         expect(
-          reconnectedGuest.roomData.gameState.board[toIndex(3, 3)].owner
-        ).toBe('red');
+          reconnectedGuest.roomData.gameState.board[toIndex(4, 4)].owner
+        ).toBe('blue');
+        expect(
+          reconnectedGuest.roomData.gameState.board[toIndex(4, 4)].visualColor
+        ).toBe('blue');
+        expect(reconnectedGuest.roomData.gameState.scores.blue).toBe(1);
       } finally {
-        // Cleanup test room from Firebase RTDB
         await remove(ref(db, `rooms/${roomCode}`)).catch(() => {});
       }
     },

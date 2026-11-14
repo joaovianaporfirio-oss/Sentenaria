@@ -9,19 +9,20 @@ import {
 
 /**
  * Checks whether a specific 3-cell line is currently eligible to form a new trinca
- * given the current board state (including `inTrinca` flags of each cell) and rule mode.
+ * given the current board state (including `inTrinca` flags of each cell).
  *
- * Rules:
- * - All 3 cells must belong to `player`.
+ * Mandatory Adjacent Rule ("Conexão Tática"):
+ * - All 3 cells must currently belong to `player` (`cell.owner === player`).
  * - The exact trinca ID must not have been formed already.
- * - Modo Regular: 0 of the 3 cells may have participated in a previous trinca (all 3 must have `inTrinca === false`).
- * - Modo Adjacente: at least 2 of the 3 cells must have `inTrinca === false` (at most 1 cell may have `inTrinca === true`).
+ * - At least 2 of the 3 cells must be inéditas (`inTrinca === false`), meaning at most 1 cell
+ *   may have participated in a previous trinca (`usedCount <= 1`) as a pivot.
+ * - A combination of 3 cells where 2 or 3 cells already have `inTrinca === true` does NOT score.
  */
 export function isLineValidNewTrinca(
   board: readonly CellState[],
   line: TrincaLineDefinition,
   player: Player,
-  ruleMode: GameRuleMode,
+  _ruleMode: GameRuleMode,
   formedTrincaIds: Readonly<Record<string, boolean>>
 ): { valid: boolean; reusedCellIndex: number | null; priorUsedCount: number } {
   if (formedTrincaIds[line.id]) {
@@ -53,21 +54,12 @@ export function isLineValidNewTrinca(
     reusedCellIndex = i2;
   }
 
-  if (ruleMode === 'regular') {
-    // In regular mode, no cell from an already formed trinca can be reused (usedCount must be 0)
-    return {
-      valid: usedCount === 0,
-      reusedCellIndex: null,
-      priorUsedCount: usedCount,
-    };
-  } else {
-    // In adjacent mode, at least 2 of the 3 cells must NEVER have participated in a trinca before (usedCount <= 1)
-    return {
-      valid: usedCount <= 1,
-      reusedCellIndex: usedCount === 1 ? reusedCellIndex : null,
-      priorUsedCount: usedCount,
-    };
-  }
+  // Mandatory Adjacent Rule: at least 2 of the 3 cells must never have participated in a trinca before (usedCount <= 1)
+  return {
+    valid: usedCount <= 1,
+    reusedCellIndex: usedCount === 1 ? reusedCellIndex : null,
+    priorUsedCount: usedCount,
+  };
 }
 
 /**
@@ -116,7 +108,7 @@ export function detectAndApplyNewTrincas(
       (board[b.indices[1]].inTrinca ? 1 : 0) +
       (board[b.indices[2]].inTrinca ? 1 : 0);
 
-    if (ruleMode === 'adjacent' && aUsed !== bUsed) {
+    if (aUsed !== bUsed) {
       // Evaluate lines with 1 prior used cell before 0 prior used cells
       return bUsed - aUsed;
     }
@@ -164,7 +156,7 @@ export function countImmediateTrincasForMove(
   board: readonly CellState[],
   moveIndex: number,
   player: Player,
-  ruleMode: GameRuleMode,
+  _ruleMode: GameRuleMode,
   formedTrincaIds: Readonly<Record<string, boolean>>
 ): number {
   const candidateLines = LINES_BY_CELL[moveIndex];
@@ -203,7 +195,7 @@ export function countImmediateTrincasForMove(
       (tempInTrinca.has(b.indices[0]) ? 1 : 0) +
       (tempInTrinca.has(b.indices[1]) ? 1 : 0) +
       (tempInTrinca.has(b.indices[2]) ? 1 : 0);
-    if (ruleMode === 'adjacent' && aUsed !== bUsed) {
+    if (aUsed !== bUsed) {
       return bUsed - aUsed;
     }
     const aIsMiddle = a.indices[1] === moveIndex ? 1 : 0;
@@ -219,7 +211,7 @@ export function countImmediateTrincasForMove(
       (tempInTrinca.has(i1) ? 1 : 0) +
       (tempInTrinca.has(i2) ? 1 : 0);
 
-    const valid = ruleMode === 'regular' ? usedCount === 0 : usedCount <= 1;
+    const valid = usedCount <= 1;
     if (valid) {
       count++;
       tempInTrinca.add(i0);

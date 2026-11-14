@@ -12,11 +12,11 @@ import {
   Moon,
   Palette,
   Play,
+  Repeat,
   Settings,
   ShieldAlert,
   Sparkles,
   Sun,
-  Target,
   Users,
   Volume2,
   VolumeX,
@@ -27,7 +27,6 @@ import {
   AudioSettings,
   CustomizationSettings,
   GameConfig,
-  GameRuleMode,
   OpponentMode,
   ScoringMode,
 } from '../core/types';
@@ -73,14 +72,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
     onUpdateConfig({ opponentMode });
   };
 
-  const selectRuleMode = (ruleMode: GameRuleMode) => {
-    soundEngine.playMenuClick();
-    onUpdateConfig({ ruleMode });
-  };
-
   const selectScoringMode = (scoringMode: ScoringMode) => {
     soundEngine.playMenuClick();
-    onUpdateConfig({ scoringMode });
+    onUpdateConfig({ scoringMode, ruleMode: 'adjacent' });
   };
 
   const selectDifficulty = (aiDifficulty: AIDifficulty) => {
@@ -381,7 +375,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     >
                       {config.aiPlayer === 'blue'
                         ? 'Vermelho (1º a jogar)'
-                        : 'Azul (Acesso ao centro)'}
+                        : 'Azul (2º a jogar • Roubo de Peça)'}
                     </button>
                   </div>
                 </div>
@@ -451,116 +445,25 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             )}
           </section>
 
-          {/* STEP 2 & 3: Game Mode (Regular vs Adjacent) & Scoring Mode (8 Points vs Free) */}
+          {/* STEP 2: Modalidade (8 Pontos vs Modo Livre) & Regras de Balanceamento Ativas */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Rule Mode */}
+            {/* Modality Selector: 8 Pontos (1st & default) and Modo Livre (2nd) */}
             <section className={`p-5 rounded-3xl border-2 ${cardSurface}`}>
-              <div className="flex items-center gap-2 mb-3.5">
-                <span
-                  className="w-6 h-6 rounded-full text-xs font-black text-white flex items-center justify-center"
-                  style={{ backgroundColor: accentColor }}
-                >
-                  2
+              <div className="flex items-center justify-between mb-3.5">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-6 h-6 rounded-full text-xs font-black text-white flex items-center justify-center"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    2
+                  </span>
+                  <h2 className="text-base sm:text-lg font-black font-display">
+                    Modalidade da Partida
+                  </h2>
+                </div>
+                <span className="text-[11px] font-bold opacity-60">
+                  Escolha o formato
                 </span>
-                <h2 className="text-base sm:text-lg font-black font-display">
-                  Modo de Jogo
-                </h2>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <button
-                  type="button"
-                  onClick={() => selectRuleMode('regular')}
-                  className={`p-3.5 rounded-2xl border-2 border-b-4 text-left transition-all ${
-                    config.ruleMode === 'regular'
-                      ? darkMode
-                        ? 'bg-[#27304D]'
-                        : 'bg-sky-50/70'
-                      : darkMode
-                      ? 'bg-[#232940] border-[#323B59]'
-                      : 'bg-[#FAF7F2] border-[#E4DCCB]'
-                  }`}
-                  style={
-                    config.ruleMode === 'regular'
-                      ? { borderColor: accentColor }
-                      : undefined
-                  }
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-sm sm:text-base font-display flex items-center gap-1.5">
-                      <Target className="w-4 h-4" style={{ color: accentColor }} />
-                      Modo Regular
-                    </span>
-                    {config.ruleMode === 'regular' && (
-                      <span
-                        className="w-5 h-5 rounded-full flex items-center justify-center text-white"
-                        style={{ backgroundColor: accentColor }}
-                      >
-                        <Check className="w-3 h-3 stroke-[3]" />
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs font-semibold opacity-75 mt-1">
-                    Trincas formadas bloqueiam suas 3 casas. Nenhuma peça de
-                    trinca já formada pode ser reutilizada.
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => selectRuleMode('adjacent')}
-                  className={`p-3.5 rounded-2xl border-2 border-b-4 text-left transition-all ${
-                    config.ruleMode === 'adjacent'
-                      ? darkMode
-                        ? 'bg-[#27304D]'
-                        : 'bg-sky-50/70'
-                      : darkMode
-                      ? 'bg-[#232940] border-[#323B59]'
-                      : 'bg-[#FAF7F2] border-[#E4DCCB]'
-                  }`}
-                  style={
-                    config.ruleMode === 'adjacent'
-                      ? { borderColor: accentColor }
-                      : undefined
-                  }
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-sm sm:text-base font-display flex items-center gap-1.5">
-                      <Layers
-                        className="w-4 h-4"
-                        style={{ color: accentColor }}
-                      />
-                      Modo Adjacente
-                    </span>
-                    {config.ruleMode === 'adjacent' && (
-                      <span
-                        className="w-5 h-5 rounded-full flex items-center justify-center text-white"
-                        style={{ backgroundColor: accentColor }}
-                      >
-                        <Check className="w-3 h-3 stroke-[3]" />
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs font-semibold opacity-75 mt-1">
-                    Permite reutilizar 1 peça de trinca já formada para criar
-                    novas trincas, exigindo ao menos 2 casas inéditas!
-                  </p>
-                </button>
-              </div>
-            </section>
-
-            {/* Scoring Mode */}
-            <section className={`p-5 rounded-3xl border-2 ${cardSurface}`}>
-              <div className="flex items-center gap-2 mb-3.5">
-                <span
-                  className="w-6 h-6 rounded-full text-xs font-black text-white flex items-center justify-center"
-                  style={{ backgroundColor: accentColor }}
-                >
-                  3
-                </span>
-                <h2 className="text-base sm:text-lg font-black font-display">
-                  Sistema de Pontuação
-                </h2>
               </div>
 
               <div className="flex flex-col gap-3">
@@ -588,7 +491,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                         className="w-4 h-4"
                         style={{ color: accentColor }}
                       />
-                      Modo 8 Pontos
+                      8 Pontos
                     </span>
                     {config.scoringMode === 'eight_points' && (
                       <span
@@ -600,8 +503,8 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     )}
                   </div>
                   <p className="text-xs font-semibold opacity-75 mt-1">
-                    Corrida estratégica: o primeiro jogador a formar 8 trincas
-                    vence a partida imediatamente!
+                    Disputa por pontuação: cada trinca válida vale 1 ponto. O
+                    primeiro jogador a alcançar 8 pontos vence!
                   </p>
                 </button>
 
@@ -641,10 +544,72 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     )}
                   </div>
                   <p className="text-xs font-semibold opacity-75 mt-1">
-                    Sem limite de pontos! A partida segue até preencher o
-                    tabuleiro ou acabarem as jogadas válidas.
+                    Sem meta fixa de pontos! A partida segue livremente até
+                    preencher todas as 81 casas do tabuleiro.
                   </p>
                 </button>
+              </div>
+            </section>
+
+            {/* Active Mechanics Card: Mandatory Adjacent Rule + Pie Rule + 81 Free Cells */}
+            <section className={`p-5 rounded-3xl border-2 ${cardSurface}`}>
+              <div className="flex items-center justify-between mb-3.5">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="w-6 h-6 rounded-full text-xs font-black text-white flex items-center justify-center"
+                    style={{ backgroundColor: accentColor }}
+                  >
+                    ✦
+                  </span>
+                  <h2 className="text-base sm:text-lg font-black font-display">
+                    Mecânicas da Partida
+                  </h2>
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500">
+                  Padrão Oficial
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <div
+                  className={`p-3.5 rounded-2xl border-2 ${
+                    darkMode
+                      ? 'bg-[#232940] border-[#323B59]'
+                      : 'bg-[#FAF7F2] border-[#E4DCCB]'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-black text-xs sm:text-sm font-display">
+                    <Layers
+                      className="w-4 h-4 shrink-0"
+                      style={{ color: accentColor }}
+                    />
+                    <span>Modo Adjacente Obrigatório</span>
+                  </div>
+                  <p className="text-xs font-semibold opacity-75 mt-1">
+                    Permite reutilizar 1 peça de trinca anterior como pivô para
+                    formar novas trincas, exigindo ao menos 2 casas inéditas.
+                  </p>
+                </div>
+
+                <div
+                  className={`p-3.5 rounded-2xl border-2 ${
+                    darkMode
+                      ? 'bg-[#232940] border-[#323B59]'
+                      : 'bg-[#FAF7F2] border-[#E4DCCB]'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-black text-xs sm:text-sm font-display">
+                    <Repeat
+                      className="w-4 h-4 shrink-0"
+                      style={{ color: blueColor }}
+                    />
+                    <span>Roubo de Peça & 81 Casas Livres</span>
+                  </div>
+                  <p className="text-xs font-semibold opacity-75 mt-1">
+                    Todas as 81 casas são livres desde o 1º turno. Após a 1ª
+                    jogada do Vermelho, o Azul pode continuar ou roubar a 1ª peça!
+                  </p>
+                </div>
               </div>
             </section>
           </div>
@@ -694,18 +659,20 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
               <div className="mt-3 space-y-1.5 text-xs font-bold opacity-80">
                 <div className="flex justify-between">
-                  <span>Regra de Trincas:</span>
-                  <strong className="font-black">
-                    {config.ruleMode === 'regular' ? 'Regular' : 'Adjacente'}
-                  </strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>Objetivo:</span>
+                  <span>Modalidade:</span>
                   <strong className="font-black">
                     {config.scoringMode === 'eight_points'
                       ? '8 Pontos'
                       : 'Modo Livre'}
                   </strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>Regra de Trincas:</span>
+                  <strong className="font-black">Adjacente (Obrigatório)</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span>Balanceamento:</span>
+                  <strong className="font-black">Roubo de Peça (1º Turno)</strong>
                 </div>
               </div>
             </div>
@@ -787,7 +754,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     Regras do Jogo
                   </div>
                   <div className="text-xs font-semibold opacity-70">
-                    Guia ilustrado, centro 3×3 e modo adjacente
+                    Modalidades, modo adjacente e roubo de peça
                   </div>
                 </div>
               </div>

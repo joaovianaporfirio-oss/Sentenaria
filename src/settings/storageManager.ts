@@ -91,6 +91,9 @@ export function loadGameConfig(): GameConfig {
     return {
       ...DEFAULT_GAME_CONFIG,
       ...parsed,
+      ruleMode: 'adjacent',
+      scoringMode:
+        parsed?.scoringMode === 'free' ? 'free' : 'eight_points',
     };
   } catch {
     return { ...DEFAULT_GAME_CONFIG };

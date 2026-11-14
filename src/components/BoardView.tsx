@@ -1,12 +1,6 @@
 import React, { useState } from 'react';
-import { Lock } from 'lucide-react';
-import {
-  BOARD_SIZE,
-  COL_LABELS,
-  isCenterRegion,
-  ROW_LABELS,
-} from '../core/constants';
-import { hasRedMadeFirstMove, isValidMove } from '../core/gameEngine';
+import { COL_LABELS, ROW_LABELS } from '../core/constants';
+import { isValidMove } from '../core/gameEngine';
 import {
   CellState,
   CustomizationSettings,
@@ -55,8 +49,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
   const recentTrincaIds = new Set(
     lastMove?.trincasFormed.map((t) => t.id) ?? []
   );
-  const redFirstMoveCenterRestricted =
-    currentPlayer === 'red' && !hasRedMadeFirstMove(board);
 
   const handleCellPress = (cell: CellState) => {
     if (disabled) return;
@@ -100,7 +92,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
   // Individual cell styling
   const getCellClasses = (
     cell: CellState,
-    inCenter: boolean,
     isLastPlaced: boolean,
     isValid: boolean
   ): string => {
@@ -117,54 +108,28 @@ export const BoardView: React.FC<BoardViewProps> = ({
     let surface = '';
 
     if (boardStyle === 'wood_table') {
-      if (inCenter) {
-        surface = darkMode
-          ? 'bg-[#3B2B1E] border border-[#5C432F]'
-          : 'bg-[#CDA87E] border border-[#AC8357]';
-      } else {
-        surface = darkMode
-          ? 'bg-[#33261B] border border-[#473526]'
-          : 'bg-[#EFE0C9] border border-[#D4B996]';
-      }
+      surface = darkMode
+        ? 'bg-[#33261B] border border-[#473526]'
+        : 'bg-[#EFE0C9] border border-[#D4B996]';
     } else if (boardStyle === 'wii_gloss') {
-      if (inCenter) {
-        surface = darkMode
-          ? 'bg-[#22304C] border border-[#3B5280]'
-          : 'bg-[#E6F4FC] border border-[#BAE0F7]';
-      } else {
-        surface = darkMode
-          ? 'bg-[#1E2942] border border-[#2C3B5E]'
-          : 'bg-[#F4F9FD] border border-[#DCEBF7]';
-      }
+      surface = darkMode
+        ? 'bg-[#1E2942] border border-[#2C3B5E]'
+        : 'bg-[#F4F9FD] border border-[#DCEBF7]';
     } else if (boardStyle === 'minimal_grid') {
-      if (inCenter) {
-        surface = darkMode
-          ? 'bg-[#1F263B] border border-[#374366]'
-          : 'bg-slate-100 border border-slate-300';
-      } else {
-        surface = darkMode
-          ? 'bg-[#181D2E] border border-[#262E47]'
-          : 'bg-white border border-slate-200';
-      }
+      surface = darkMode
+        ? 'bg-[#181D2E] border border-[#262E47]'
+        : 'bg-white border border-slate-200';
     } else {
       // paper_craft
-      if (inCenter) {
-        surface = darkMode
-          ? 'bg-[#262D47] border-2 border-dashed border-[#434F7A]'
-          : 'bg-[#F1E8D8] border-2 border-dashed border-[#CBBBA0]';
-      } else {
-        surface = darkMode
-          ? 'bg-[#232940] border border-[#333C5C] shadow-[inset_0_-2px_0_rgba(0,0,0,0.3)]'
-          : 'bg-white border border-[#E5DEC9] shadow-[0_2px_0_#E2D9C5]';
-      }
+      surface = darkMode
+        ? 'bg-[#232940] border border-[#333C5C] shadow-[inset_0_-2px_0_rgba(0,0,0,0.3)]'
+        : 'bg-white border border-[#E5DEC9] shadow-[0_2px_0_#E2D9C5]';
     }
 
     const interaction = disabled
       ? 'cursor-default'
       : isValid
       ? 'cursor-pointer hover:-translate-y-[1px] active:translate-y-[1px]'
-      : cell.owner === null && redFirstMoveCenterRestricted && inCenter
-      ? 'cursor-not-allowed'
       : 'cursor-default';
 
     const shake =
@@ -217,45 +182,22 @@ export const BoardView: React.FC<BoardViewProps> = ({
         <div
           className={`relative flex-1 aspect-square p-2 sm:p-3.5 rounded-2xl sm:rounded-3xl border-4 transition-colors duration-300 ${getBoardContainerStyle()}`}
         >
-          {/* Central 3x3 Region Highlight Frame Overlay */}
-          <div
-            className="pointer-events-none absolute z-10 rounded-xl sm:rounded-2xl transition-all duration-300"
-            style={{
-              left: 'calc(33.333% + 2px)',
-              top: 'calc(33.333% + 2px)',
-              width: 'calc(33.333% - 4px)',
-              height: 'calc(33.333% - 4px)',
-              border: redFirstMoveCenterRestricted
-                ? `2px dashed ${redColor}88`
-                : `2px dashed ${
-                    currentPlayer === 'red' ? redColor : blueColor
-                  }66`,
-              boxShadow: redFirstMoveCenterRestricted
-                ? `inset 0 0 14px ${redColor}18`
-                : `inset 0 0 16px ${
-                    currentPlayer === 'red' ? redColor : blueColor
-                  }14`,
-            }}
-          />
-
           {/* 9x9 Grid of Cells */}
           <div className="relative z-10 w-full h-full grid grid-cols-9 grid-rows-9 gap-1 sm:gap-1.5">
             {board.map((cell) => {
-              const inCenter = isCenterRegion(cell.row, cell.col);
               const isValid =
                 !disabled &&
                 isValidMove(board, cell.row, cell.col, currentPlayer);
               const isHovered = hoveredIndex === cell.index;
               const isLastPlaced = lastMove?.index === cell.index;
-              const isRedBlockedCenter =
-                cell.owner === null &&
-                inCenter &&
-                redFirstMoveCenterRestricted;
+
+              // Visual color of the placed piece (supports Roubo de Peça / Pie Rule)
+              const visualPlayer = cell.visualColor ?? cell.owner;
 
               const pieceColor =
-                cell.owner === 'red'
+                visualPlayer === 'red'
                   ? redColor
-                  : cell.owner === 'blue'
+                  : visualPlayer === 'blue'
                   ? blueColor
                   : currentPlayer === 'red'
                   ? redColor
@@ -267,7 +209,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                   type="button"
                   aria-label={`Casa ${COL_LABELS[cell.col]}${
                     ROW_LABELS[cell.row]
-                  }${inCenter ? ' (Região Central)' : ''}`}
+                  }`}
                   onClick={() => handleCellPress(cell)}
                   onMouseEnter={() => setHoveredIndex(cell.index)}
                   onMouseLeave={() =>
@@ -275,20 +217,15 @@ export const BoardView: React.FC<BoardViewProps> = ({
                       prev === cell.index ? null : prev
                     )
                   }
-                  className={getCellClasses(
-                    cell,
-                    inCenter,
-                    isLastPlaced,
-                    isValid
-                  )}
+                  className={getCellClasses(cell, isLastPlaced, isValid)}
                   style={{
                     backgroundColor: cell.inTrinca
-                      ? cell.owner === 'red'
+                      ? visualPlayer === 'red'
                         ? `${redColor}${darkMode ? '28' : '1C'}`
                         : `${blueColor}${darkMode ? '28' : '1C'}`
                       : undefined,
                     borderColor: cell.inTrinca
-                      ? cell.owner === 'red'
+                      ? visualPlayer === 'red'
                         ? `${redColor}88`
                         : `${blueColor}88`
                       : isHovered && isValid
@@ -296,25 +233,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
                       : undefined,
                   }}
                 >
-                  {/* Subtle restricted pattern for Red in empty 3x3 center cells */}
-                  {isRedBlockedCenter && (
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <Lock
-                        className={`w-3 h-3 sm:w-3.5 sm:h-3.5 transition-opacity duration-150 ${
-                          isHovered ? 'opacity-65 text-red-400 scale-110' : 'opacity-20 text-slate-400'
-                        }`}
-                      />
-                    </div>
-                  )}
-
                   {/* Subtle valid move dot hint if enabled */}
                   {showMoveHints &&
                     cell.owner === null &&
                     isValid &&
-                    !isHovered &&
-                    inCenter && (
+                    !isHovered && (
                       <span
-                        className="w-1.5 h-1.5 rounded-full opacity-35 pointer-events-none"
+                        className="w-1 h-1 rounded-full opacity-20 pointer-events-none"
                         style={{
                           backgroundColor:
                             currentPlayer === 'red' ? redColor : blueColor,
@@ -333,14 +258,23 @@ export const BoardView: React.FC<BoardViewProps> = ({
                   )}
 
                   {/* Placed Symbol */}
-                  {cell.owner !== null && (
+                  {cell.owner !== null && visualPlayer !== null && (
                     <PlayerSymbol
-                      player={cell.owner}
+                      player={visualPlayer}
                       symbolStyle={symbolStyle}
                       color={pieceColor}
                       inTrinca={cell.inTrinca}
                       trincaCount={cell.trincaCount}
                       animateIn={animationsEnabled && isLastPlaced}
+                    />
+                  )}
+
+                  {/* Subtle badge when piece was stolen via Pie Rule */}
+                  {cell.stolenByPieRule && (
+                    <span
+                      title="Peça roubada pelo Azul (Roubo de Peça)"
+                      className="pointer-events-none absolute top-0.5 left-0.5 w-2 h-2 rounded-full ring-1 ring-white/80"
+                      style={{ backgroundColor: blueColor }}
                     />
                   )}
                 </button>
@@ -408,35 +342,20 @@ export const BoardView: React.FC<BoardViewProps> = ({
       >
         <div className="flex items-center gap-1.5">
           <span
-            className="w-3 h-3 rounded border-2 border-dashed inline-block"
+            className="w-2.5 h-2.5 rounded-full inline-block"
             style={{
-              borderColor: currentPlayer === 'red' ? redColor : blueColor,
+              backgroundColor: currentPlayer === 'red' ? redColor : blueColor,
             }}
           />
-          <span>
-            Centro 3×3:{' '}
-            {redFirstMoveCenterRestricted ? (
-              <strong style={{ color: redColor }}>
-                Bloqueado na 1ª jogada do Vermelho
-              </strong>
-            ) : (
-              <strong
-                style={{
-                  color: currentPlayer === 'red' ? redColor : blueColor,
-                }}
-              >
-                Liberado p/ {currentPlayer === 'red' ? 'Vermelho' : 'Azul'}
-              </strong>
-            )}
-          </span>
+          <span>81 Casas Livres</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-3 h-1.5 rounded-full bg-current opacity-60 inline-block" />
-          <span>Linha contínua: Trinca nova</span>
+          <span>Linha contínua: Trinca inédita</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-3 h-1.5 border-b-2 border-dashed border-current opacity-70 inline-block" />
-          <span>Tracejada: Trinca adjacente</span>
+          <span>Tracejada: Trinca adjacente (1 pivô)</span>
         </div>
       </div>
     </div>

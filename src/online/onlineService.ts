@@ -16,6 +16,7 @@ import {
   createInitialGameState,
   isValidMove,
   makeMove,
+  resolvePieRuleDecision,
 } from '../core/gameEngine';
 import {
   CellState,
@@ -24,6 +25,8 @@ import {
   GameConfig,
   GameState,
   MoveRecord,
+  PieRuleDecision,
+  PieRuleState,
   Player,
 } from '../core/types';
 import { auth, db, ensurePlayerIdentity } from './firebaseConfig';
@@ -81,6 +84,9 @@ interface SerializedCell {
   col: number;
   index: number;
   owner: Player | 'none';
+  visualColor: Player | 'none';
+  placedBy: Player | 'none';
+  stolenByPieRule: boolean;
   inTrinca: boolean;
   trincaCount: number;
   placedAtTurn: number; // -1 for null
@@ -110,12 +116,15 @@ interface SerializedMoveRecord {
   pointsEarned: number;
   scoreAfter: { red: number; blue: number };
   timestamp: number;
+  isPieSteal: boolean;
 }
 
 interface SerializedGameState {
   board: SerializedCell[];
   currentPlayer: Player;
   turnCount: number;
+  pieRuleState: PieRuleState;
+  firstMoveIndex: number; // -1 for null
   scores: { red: number; blue: number };
   formedTrincas: SerializedTrinca[];
   formedTrincaIds: Record<string, boolean>;
@@ -181,6 +190,7 @@ function serializeMove(m: MoveRecord): SerializedMoveRecord {
     pointsEarned: m.pointsEarned,
     scoreAfter: { ...m.scoreAfter },
     timestamp: m.timestamp,
+    isPieSteal: Boolean(m.isPieSteal),
   };
 }
 
@@ -198,6 +208,7 @@ function deserializeMove(raw: SerializedMoveRecord): MoveRecord {
     pointsEarned: raw.pointsEarned ?? 0,
     scoreAfter: raw.scoreAfter ?? { red: 0, blue: 0 },
     timestamp: raw.timestamp ?? Date.now(),
+    isPieSteal: Boolean(raw.isPieSteal),
   };
 }
 
@@ -210,12 +221,17 @@ export function serializeGameStateForFirebase(
       col: c.col,
       index: c.index,
       owner: c.owner ?? 'none',
+      visualColor: c.visualColor ?? c.owner ?? 'none',
+      placedBy: c.placedBy ?? c.owner ?? 'none',
+      stolenByPieRule: Boolean(c.stolenByPieRule),
       inTrinca: Boolean(c.inTrinca),
       trincaCount: c.trincaCount ?? 0,
       placedAtTurn: c.placedAtTurn ?? -1,
     })),
     currentPlayer: state.currentPlayer,
     turnCount: state.turnCount,
+    pieRuleState: state.pieRuleState ?? 'not_triggered',
+    firstMoveIndex: state.firstMoveIndex ?? -1,
     scores: {
       red: state.scores.red ?? 0,
       blue: state.scores.blue ?? 0,
@@ -227,7 +243,7 @@ export function serializeGameStateForFirebase(
     status: state.status,
     winner: state.winner ?? 'none',
     endReason: state.endReason ?? 'none',
-    config: { ...state.config, opponentMode: 'online' },
+    config: { ...state.config, ruleMode: 'adjacent', opponentMode: 'online' },
   };
 }
 
@@ -243,11 +259,21 @@ export function deserializeGameStateFromFirebase(
   const board: CellState[] = fallbackBoard.map((defaultCell, i) => {
     const rc = rawBoard[i];
     if (!rc) return defaultCell;
+    const owner = rc.owner === 'red' || rc.owner === 'blue' ? rc.owner : null;
+    const visualColor =
+      rc.visualColor === 'red' || rc.visualColor === 'blue'
+        ? rc.visualColor
+        : owner;
+    const placedBy =
+      rc.placedBy === 'red' || rc.placedBy === 'blue' ? rc.placedBy : owner;
     return {
       row: rc.row ?? defaultCell.row,
       col: rc.col ?? defaultCell.col,
       index: rc.index ?? i,
-      owner: rc.owner === 'red' || rc.owner === 'blue' ? rc.owner : null,
+      owner,
+      visualColor,
+      placedBy,
+      stolenByPieRule: Boolean(rc.stolenByPieRule),
       inTrinca: Boolean(rc.inTrinca),
       trincaCount: Number(rc.trincaCount ?? 0),
       placedAtTurn:
@@ -284,10 +310,29 @@ export function deserializeGameStateFromFirebase(
       ? moveHistory[moveHistory.length - 1]
       : null;
 
+  const validPieStates: PieRuleState[] = [
+    'not_triggered',
+    'pending',
+    'continued',
+    'stolen',
+  ];
+  const pieRuleState: PieRuleState = validPieStates.includes(raw.pieRuleState)
+    ? raw.pieRuleState
+    : 'not_triggered';
+
+  const firstMoveIndex: number | null =
+    typeof raw.firstMoveIndex === 'number' &&
+    raw.firstMoveIndex >= 0 &&
+    raw.firstMoveIndex < TOTAL_CELLS
+      ? raw.firstMoveIndex
+      : null;
+
   return {
     board,
     currentPlayer: raw.currentPlayer === 'blue' ? 'blue' : 'red',
     turnCount: Number(raw.turnCount ?? 0),
+    pieRuleState,
+    firstMoveIndex,
     scores: {
       red: Number(raw.scores?.red ?? 0),
       blue: Number(raw.scores?.blue ?? 0),
@@ -304,7 +349,7 @@ export function deserializeGameStateFromFirebase(
     endReason:
       raw.endReason && raw.endReason !== 'none' ? raw.endReason : null,
     config: {
-      ruleMode: raw.config?.ruleMode === 'adjacent' ? 'adjacent' : 'regular',
+      ruleMode: 'adjacent',
       scoringMode:
         raw.config?.scoringMode === 'free' ? 'free' : 'eight_points',
       opponentMode: 'online',
@@ -728,6 +773,12 @@ export async function submitOnlineMove(
     throw new Error('A partida já foi finalizada.');
   }
 
+  if (authoritativeState.pieRuleState === 'pending') {
+    throw new Error(
+      'O jogador Azul precisa escolher entre continuar como Azul ou roubar a primeira peça antes de prosseguir.'
+    );
+  }
+
   if (authoritativeState.currentPlayer !== callerColor) {
     throw new Error('Aguarde a sua vez de jogar!');
   }
@@ -746,6 +797,63 @@ export async function submitOnlineMove(
     gameState: serializedNextState,
     currentTurn: nextGameState.currentPlayer,
     status: nextStatus,
+    updatedAt: Date.now(),
+  });
+
+  return nextGameState;
+}
+
+/**
+ * Authoritatively resolves the Pie Rule ("Roubo de Peça") decision by the Guest (Blue player)
+ * in an online multiplayer room, synchronizing piece ownership, visualColor, pieRuleState,
+ * and next turn across both clients.
+ */
+export async function submitOnlinePieRuleDecision(
+  roomCode: string,
+  playerId: string,
+  decision: PieRuleDecision
+): Promise<GameState> {
+  if (!auth.currentUser) {
+    await signInAnonymously(auth);
+  }
+  await ensurePlayerIdentity();
+  const code = roomCode.toUpperCase();
+  const roomRef = ref(db, `rooms/${code}`);
+
+  const snap = await get(roomRef);
+  if (!snap.exists()) {
+    throw new Error('Sala não encontrada.');
+  }
+
+  const current = snap.val();
+  if (current.guestId !== playerId) {
+    throw new Error(
+      'Apenas o jogador Azul (Convidado) pode decidir sobre o Roubo de Peça.'
+    );
+  }
+
+  const authoritativeState = deserializeGameStateFromFirebase(
+    current.gameState
+  );
+  if (current.currentTurn === 'red' || current.currentTurn === 'blue') {
+    authoritativeState.currentPlayer = current.currentTurn;
+  }
+
+  if (authoritativeState.status !== 'playing') {
+    throw new Error('A partida já foi finalizada.');
+  }
+
+  if (authoritativeState.pieRuleState !== 'pending') {
+    throw new Error('A decisão de Roubo de Peça já foi realizada.');
+  }
+
+  const nextGameState = resolvePieRuleDecision(authoritativeState, decision);
+  const serializedNextState = serializeGameStateForFirebase(nextGameState);
+
+  await update(roomRef, {
+    gameState: serializedNextState,
+    currentTurn: nextGameState.currentPlayer,
+    status: 'playing',
     updatedAt: Date.now(),
   });
 
