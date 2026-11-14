@@ -8,11 +8,9 @@ import {
   Flame,
   Globe,
   Infinity as InfinityIcon,
-  Layers,
   Moon,
   Palette,
   Play,
-  Repeat,
   Settings,
   ShieldAlert,
   Sparkles,
@@ -187,7 +185,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left 8 Columns: Match Configuration Cards */}
         <div className="lg:col-span-8 flex flex-col gap-5">
-          {/* STEP 1: Select Opponent Mode (PvP vs AI) */}
+          {/* STEP 1: Select Opponent Mode (PvP vs AI vs Online) */}
           <section className={`p-5 rounded-3xl border-2 ${cardSurface}`}>
             <div className="flex items-center justify-between mb-3.5">
               <div className="flex items-center gap-2">
@@ -201,9 +199,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   Escolha o Adversário
                 </h2>
               </div>
-              <span className="text-xs font-bold opacity-60">
-                Vermelho sempre começa
-              </span>
+              <span className="text-xs font-bold opacity-60">P1 vs P2</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
@@ -247,7 +243,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 </div>
                 <p className="text-xs font-semibold opacity-75 mt-1">
                   Jogue localmente no mesmo dispositivo, alternando os turnos
-                  entre Vermelho e Azul.
+                  entre P1 e P2.
                 </p>
               </button>
 
@@ -367,15 +363,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                           aiPlayer: config.aiPlayer === 'blue' ? 'red' : 'blue',
                         });
                       }}
-                      className="px-2.5 py-1 rounded-lg text-xs font-black text-white shadow-sm transition-transform active:scale-95"
+                      className="px-3 py-1 rounded-xl text-xs font-black text-white border border-b-2 border-black/25 shadow-sm transition-transform active:scale-95"
                       style={{
-                        backgroundColor:
-                          config.aiPlayer === 'blue' ? redColor : blueColor,
+                        backgroundColor: accentColor,
                       }}
                     >
-                      {config.aiPlayer === 'blue'
-                        ? 'Vermelho (1º a jogar)'
-                        : 'Azul (2º a jogar • Roubo de Peça)'}
+                      {config.aiPlayer === 'blue' ? 'P1' : 'P2'}
                     </button>
                   </div>
                 </div>
@@ -445,174 +438,113 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             )}
           </section>
 
-          {/* STEP 2: Modalidade (8 Pontos vs Modo Livre) & Regras de Balanceamento Ativas */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Modality Selector: 8 Pontos (1st & default) and Modo Livre (2nd) */}
-            <section className={`p-5 rounded-3xl border-2 ${cardSurface}`}>
-              <div className="flex items-center justify-between mb-3.5">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="w-6 h-6 rounded-full text-xs font-black text-white flex items-center justify-center"
+          {/* STEP 2: Modalidade da Partida (8 Pontos & Modo Livre) */}
+          <section className={`p-5 rounded-3xl border-2 ${cardSurface}`}>
+            <div className="flex items-center justify-between mb-3.5">
+              <div className="flex items-center gap-2">
+                <span
+                  className="w-6 h-6 rounded-full text-xs font-black text-white flex items-center justify-center"
+                  style={{ backgroundColor: accentColor }}
+                >
+                  2
+                </span>
+                <h2 className="text-base sm:text-lg font-black font-display">
+                  Modalidade da Partida
+                </h2>
+              </div>
+              <span className="text-xs font-bold opacity-60">
+                Escolha o formato
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <button
+                type="button"
+                onClick={() => selectScoringMode('eight_points')}
+                className={`p-4 rounded-2xl border-2 border-b-4 text-left transition-all ${
+                  config.scoringMode === 'eight_points'
+                    ? darkMode
+                      ? 'bg-[#27304D]'
+                      : 'bg-sky-50/70'
+                    : darkMode
+                    ? 'bg-[#232940] border-[#323B59] hover:bg-[#282F49]'
+                    : 'bg-[#FAF7F2] border-[#E4DCCB] hover:bg-[#F3EFE6]'
+                }`}
+                style={
+                  config.scoringMode === 'eight_points'
+                    ? { borderColor: accentColor }
+                    : undefined
+                }
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white"
                     style={{ backgroundColor: accentColor }}
                   >
-                    2
-                  </span>
-                  <h2 className="text-base sm:text-lg font-black font-display">
-                    Modalidade da Partida
-                  </h2>
+                    <Crown className="w-5 h-5" />
+                  </div>
+                  {config.scoringMode === 'eight_points' && (
+                    <span
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-white"
+                      style={{ backgroundColor: accentColor }}
+                    >
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    </span>
+                  )}
                 </div>
-                <span className="text-[11px] font-bold opacity-60">
-                  Escolha o formato
-                </span>
-              </div>
+                <div className="font-black text-sm sm:text-base font-display">
+                  8 Pontos
+                </div>
+                <p className="text-xs font-semibold opacity-75 mt-1">
+                  Disputa por pontuação: cada trinca válida vale 1 ponto. O
+                  primeiro jogador a alcançar 8 pontos vence a partida!
+                </p>
+              </button>
 
-              <div className="flex flex-col gap-3">
-                <button
-                  type="button"
-                  onClick={() => selectScoringMode('eight_points')}
-                  className={`p-3.5 rounded-2xl border-2 border-b-4 text-left transition-all ${
-                    config.scoringMode === 'eight_points'
-                      ? darkMode
-                        ? 'bg-[#27304D]'
-                        : 'bg-sky-50/70'
-                      : darkMode
-                      ? 'bg-[#232940] border-[#323B59]'
-                      : 'bg-[#FAF7F2] border-[#E4DCCB]'
-                  }`}
-                  style={
-                    config.scoringMode === 'eight_points'
-                      ? { borderColor: accentColor }
-                      : undefined
-                  }
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-sm sm:text-base font-display flex items-center gap-1.5">
-                      <Crown
-                        className="w-4 h-4"
-                        style={{ color: accentColor }}
-                      />
-                      8 Pontos
-                    </span>
-                    {config.scoringMode === 'eight_points' && (
-                      <span
-                        className="w-5 h-5 rounded-full flex items-center justify-center text-white"
-                        style={{ backgroundColor: accentColor }}
-                      >
-                        <Check className="w-3 h-3 stroke-[3]" />
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs font-semibold opacity-75 mt-1">
-                    Disputa por pontuação: cada trinca válida vale 1 ponto. O
-                    primeiro jogador a alcançar 8 pontos vence!
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => selectScoringMode('free')}
-                  className={`p-3.5 rounded-2xl border-2 border-b-4 text-left transition-all ${
-                    config.scoringMode === 'free'
-                      ? darkMode
-                        ? 'bg-[#27304D]'
-                        : 'bg-sky-50/70'
-                      : darkMode
-                      ? 'bg-[#232940] border-[#323B59]'
-                      : 'bg-[#FAF7F2] border-[#E4DCCB]'
-                  }`}
-                  style={
-                    config.scoringMode === 'free'
-                      ? { borderColor: accentColor }
-                      : undefined
-                  }
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-sm sm:text-base font-display flex items-center gap-1.5">
-                      <InfinityIcon
-                        className="w-4 h-4"
-                        style={{ color: accentColor }}
-                      />
-                      Modo Livre
-                    </span>
-                    {config.scoringMode === 'free' && (
-                      <span
-                        className="w-5 h-5 rounded-full flex items-center justify-center text-white"
-                        style={{ backgroundColor: accentColor }}
-                      >
-                        <Check className="w-3 h-3 stroke-[3]" />
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs font-semibold opacity-75 mt-1">
-                    Sem meta fixa de pontos! A partida segue livremente até
-                    preencher todas as 81 casas do tabuleiro.
-                  </p>
-                </button>
-              </div>
-            </section>
-
-            {/* Active Mechanics Card: Mandatory Adjacent Rule + Pie Rule + 81 Free Cells */}
-            <section className={`p-5 rounded-3xl border-2 ${cardSurface}`}>
-              <div className="flex items-center justify-between mb-3.5">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="w-6 h-6 rounded-full text-xs font-black text-white flex items-center justify-center"
+              <button
+                type="button"
+                onClick={() => selectScoringMode('free')}
+                className={`p-4 rounded-2xl border-2 border-b-4 text-left transition-all ${
+                  config.scoringMode === 'free'
+                    ? darkMode
+                      ? 'bg-[#27304D]'
+                      : 'bg-sky-50/70'
+                    : darkMode
+                    ? 'bg-[#232940] border-[#323B59] hover:bg-[#282F49]'
+                    : 'bg-[#FAF7F2] border-[#E4DCCB] hover:bg-[#F3EFE6]'
+                }`}
+                style={
+                  config.scoringMode === 'free'
+                    ? { borderColor: accentColor }
+                    : undefined
+                }
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white"
                     style={{ backgroundColor: accentColor }}
                   >
-                    ✦
-                  </span>
-                  <h2 className="text-base sm:text-lg font-black font-display">
-                    Mecânicas da Partida
-                  </h2>
-                </div>
-                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500">
-                  Padrão Oficial
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <div
-                  className={`p-3.5 rounded-2xl border-2 ${
-                    darkMode
-                      ? 'bg-[#232940] border-[#323B59]'
-                      : 'bg-[#FAF7F2] border-[#E4DCCB]'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 font-black text-xs sm:text-sm font-display">
-                    <Layers
-                      className="w-4 h-4 shrink-0"
-                      style={{ color: accentColor }}
-                    />
-                    <span>Modo Adjacente Obrigatório</span>
+                    <InfinityIcon className="w-5 h-5" />
                   </div>
-                  <p className="text-xs font-semibold opacity-75 mt-1">
-                    Permite reutilizar 1 peça de trinca anterior como pivô para
-                    formar novas trincas, exigindo ao menos 2 casas inéditas.
-                  </p>
+                  {config.scoringMode === 'free' && (
+                    <span
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-white"
+                      style={{ backgroundColor: accentColor }}
+                    >
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    </span>
+                  )}
                 </div>
-
-                <div
-                  className={`p-3.5 rounded-2xl border-2 ${
-                    darkMode
-                      ? 'bg-[#232940] border-[#323B59]'
-                      : 'bg-[#FAF7F2] border-[#E4DCCB]'
-                  }`}
-                >
-                  <div className="flex items-center gap-1.5 font-black text-xs sm:text-sm font-display">
-                    <Repeat
-                      className="w-4 h-4 shrink-0"
-                      style={{ color: blueColor }}
-                    />
-                    <span>Roubo de Peça & 81 Casas Livres</span>
-                  </div>
-                  <p className="text-xs font-semibold opacity-75 mt-1">
-                    Todas as 81 casas são livres desde o 1º turno. Após a 1ª
-                    jogada do Vermelho, o Azul pode continuar ou roubar a 1ª peça!
-                  </p>
+                <div className="font-black text-sm sm:text-base font-display">
+                  Modo Livre
                 </div>
-              </div>
-            </section>
-          </div>
+                <p className="text-xs font-semibold opacity-75 mt-1">
+                  Sem meta fixa de pontos! A partida segue livremente até
+                  preencher todas as 81 casas do tabuleiro.
+                </p>
+              </button>
+            </div>
+          </section>
         </div>
 
         {/* Right 4 Columns: Launch CTA + Navigation Hub Cards */}
@@ -631,22 +563,34 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     color={redColor}
                     size="sm"
                   />
-                  <span className="text-xs font-extrabold">Vermelho</span>
-                </div>
-                <span className="text-xs font-black opacity-40">VS</span>
-                <div className="flex items-center gap-2">
                   <span className="text-xs font-extrabold">
-                    {config.opponentMode === 'pvp'
-                      ? 'Azul (Local)'
-                      : config.opponentMode === 'online'
-                      ? 'Azul (Online)'
-                      : `IA (${
+                    {config.opponentMode === 'ai' && config.aiPlayer === 'red'
+                      ? `IA (${
                           config.aiDifficulty === 'easy'
                             ? 'Fácil'
                             : config.aiDifficulty === 'medium'
                             ? 'Média'
                             : 'Difícil'
-                        })`}
+                        })`
+                      : 'P1'}
+                  </span>
+                </div>
+                <span className="text-xs font-black opacity-40">VS</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-extrabold">
+                    {config.opponentMode === 'pvp'
+                      ? 'P2 (Local)'
+                      : config.opponentMode === 'online'
+                      ? 'P2 (Online)'
+                      : config.aiPlayer === 'blue'
+                      ? `IA (${
+                          config.aiDifficulty === 'easy'
+                            ? 'Fácil'
+                            : config.aiDifficulty === 'medium'
+                            ? 'Média'
+                            : 'Difícil'
+                        })`
+                      : 'P2'}
                   </span>
                   <PlayerSymbol
                     player="blue"
@@ -659,20 +603,24 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
               <div className="mt-3 space-y-1.5 text-xs font-bold opacity-80">
                 <div className="flex justify-between">
+                  <span>Adversário:</span>
+                  <strong className="font-black">
+                    {config.opponentMode === 'pvp'
+                      ? '2 Jogadores (Local)'
+                      : config.opponentMode === 'online'
+                      ? 'Multiplayer Online'
+                      : `Contra a Máquina (${
+                          config.aiPlayer === 'blue' ? 'Você: P1' : 'Você: P2'
+                        })`}
+                  </strong>
+                </div>
+                <div className="flex justify-between">
                   <span>Modalidade:</span>
                   <strong className="font-black">
                     {config.scoringMode === 'eight_points'
                       ? '8 Pontos'
                       : 'Modo Livre'}
                   </strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>Regra de Trincas:</span>
-                  <strong className="font-black">Adjacente (Obrigatório)</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>Balanceamento:</span>
-                  <strong className="font-black">Roubo de Peça (1º Turno)</strong>
                 </div>
               </div>
             </div>
@@ -754,7 +702,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     Regras do Jogo
                   </div>
                   <div className="text-xs font-semibold opacity-70">
-                    Modalidades, modo adjacente e roubo de peça
+                    Modo adjacente, roubo de peça e 81 casas livres
                   </div>
                 </div>
               </div>
@@ -762,16 +710,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 Ver
               </span>
             </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                soundEngine.playMenuClick();
-                onOpenRules();
-              }}
-              className="hidden"
-              aria-hidden="true"
-            />
 
             <button
               type="button"
@@ -811,10 +749,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             </div>
             <div className="flex items-center gap-3">
               <span style={{ color: redColor }}>
-                V: {stats.redWins}
+                P1: {stats.redWins}
               </span>
               <span style={{ color: blueColor }}>
-                A: {stats.blueWins}
+                P2: {stats.blueWins}
               </span>
               <span className="opacity-70">
                 Trincas: {stats.totalTrincasFormed}

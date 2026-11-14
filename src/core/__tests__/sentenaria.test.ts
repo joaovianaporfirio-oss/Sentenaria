@@ -66,34 +66,30 @@ describe('Sentenaria — Modalidades, Modo Adjacente Obrigatório, 81 Casas Livr
     expect(state.pieRuleState).toBe('pending');
   });
 
-  it('3. implementa o Roubo de Peça (Pie Rule) — Opção A: Continuar como Azul', () => {
+  it('3. implementa o Roubo de Peça (Pie Rule) — Opção A: Continuar jogando diretamente em uma casa vazia (ou via continue)', () => {
     let state = createInitialGameState({ scoringMode: 'free' });
 
-    // Turn 1: Red places piece at (4, 4)
+    // Turn 1: P1 (Red) places piece at (4, 4)
     state = makeMove(state, 4, 4);
     expect(state.pieRuleState).toBe('pending');
     expect(state.currentPlayer).toBe('blue');
     expect(state.firstMoveIndex).toBe(toIndex(4, 4));
 
-    // Blue cannot place a normal piece on the board before resolving the Pie Rule decision
-    expect(() => makeMove(state, 0, 0)).toThrow(/Continuar como Azul|Roubar/i);
-
-    // Blue chooses Option A: 'continue' (Continuar como Azul)
-    state = resolvePieRuleDecision(state, 'continue');
+    // P2 (Blue) clicks directly on any empty cell (0, 0) while pieRuleState is 'pending':
+    // this places Blue's piece normally and permanently closes the steal opportunity ('continued')
+    state = makeMove(state, 0, 0);
     expect(state.pieRuleState).toBe('continued');
-    expect(state.currentPlayer).toBe('blue');
+    expect(state.currentPlayer).toBe('red');
 
-    // The 1st piece remains Red's in both ownership and visual color
+    // The 1st piece at (4, 4) remains Red's in both ownership and visual color
     const firstCell = state.board[toIndex(4, 4)];
     expect(firstCell.owner).toBe('red');
     expect(firstCell.visualColor).toBe('red');
     expect(firstCell.stolenByPieRule).toBe(false);
 
-    // Now Blue makes their first normal move in the same turn at (0, 0)
-    state = makeMove(state, 0, 0);
+    // And Blue's piece at (0, 0) is placed normally
     expect(state.board[toIndex(0, 0)].owner).toBe('blue');
     expect(state.board[toIndex(0, 0)].visualColor).toBe('blue');
-    expect(state.currentPlayer).toBe('red');
 
     // Pie Rule cannot be triggered or resolved again
     expect(() => resolvePieRuleDecision(state, 'steal')).toThrow();
@@ -380,10 +376,10 @@ describe('Serialização Firebase & Sincronização do Roubo de Peça Online', (
         expect(afterRedFirstMove.firstMoveIndex).toBe(toIndex(4, 4));
         expect(afterRedFirstMove.currentPlayer).toBe('blue');
 
-        // 2. While pieRuleState === 'pending', Blue cannot make a normal board move before deciding
+        // 2. While pieRuleState === 'pending', clicking the occupied first cell (4, 4) as a normal move is rejected
         await expect(
-          submitOnlineMove(roomCode, guestSessionId, 0, 0)
-        ).rejects.toThrow(/continuar como Azul ou roubar/i);
+          submitOnlineMove(roomCode, guestSessionId, 4, 4)
+        ).rejects.toThrow(/ocupada|inválida/i);
 
         // 3. Host (Red) cannot decide the Pie Rule for Blue
         await expect(

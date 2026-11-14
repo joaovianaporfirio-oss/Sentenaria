@@ -149,12 +149,6 @@ export function makeMove(
     throw new Error('Cannot make a move after the match has finished.');
   }
 
-  if (state.pieRuleState === 'pending') {
-    throw new Error(
-      'O jogador Azul precisa decidir entre Continuar como Azul ou Roubar a primeira peça antes de realizar uma jogada no tabuleiro.'
-    );
-  }
-
   const player = state.currentPlayer;
   if (!isValidMove(state.board, row, col, player)) {
     throw new Error(
@@ -238,7 +232,11 @@ export function makeMove(
     status: outcome.status,
     winner: outcome.winner,
     endReason: outcome.endReason,
-    pieRuleState: isRedFirstMove ? 'pending' : state.pieRuleState,
+    pieRuleState: isRedFirstMove
+      ? 'pending'
+      : state.pieRuleState === 'pending'
+      ? 'continued'
+      : state.pieRuleState,
     firstMoveIndex: isRedFirstMove ? moveIndex : state.firstMoveIndex,
   };
 }

@@ -773,12 +773,6 @@ export async function submitOnlineMove(
     throw new Error('A partida já foi finalizada.');
   }
 
-  if (authoritativeState.pieRuleState === 'pending') {
-    throw new Error(
-      'O jogador Azul precisa escolher entre continuar como Azul ou roubar a primeira peça antes de prosseguir.'
-    );
-  }
-
   if (authoritativeState.currentPlayer !== callerColor) {
     throw new Error('Aguarde a sua vez de jogar!');
   }

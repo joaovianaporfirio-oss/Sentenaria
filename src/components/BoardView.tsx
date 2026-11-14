@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { COL_LABELS, ROW_LABELS } from '../core/constants';
+import React, { useEffect, useState } from 'react';
+import { Repeat } from 'lucide-react';
+import { soundEngine } from '../audio/soundEngine';
+import { COL_LABELS, ROW_LABELS, toCoord } from '../core/constants';
 import { isValidMove } from '../core/gameEngine';
 import {
   CellState,
@@ -17,6 +19,9 @@ interface BoardViewProps {
   lastMove: MoveRecord | null;
   customization: CustomizationSettings;
   disabled?: boolean;
+  canStealFirstPiece?: boolean;
+  stealableCellIndex?: number | null;
+  onStealFirstPiece?: () => void;
   onCellClick: (row: number, col: number) => void;
   onInvalidCellClick?: (row: number, col: number) => void;
 }
@@ -28,11 +33,15 @@ export const BoardView: React.FC<BoardViewProps> = ({
   lastMove,
   customization,
   disabled = false,
+  canStealFirstPiece = false,
+  stealableCellIndex = null,
+  onStealFirstPiece,
   onCellClick,
   onInvalidCellClick,
 }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [shakingCellIndex, setShakingCellIndex] = useState<number | null>(null);
+  const [isStealPopoverOpen, setIsStealPopoverOpen] = useState<boolean>(false);
 
   const {
     darkMode,
@@ -46,6 +55,17 @@ export const BoardView: React.FC<BoardViewProps> = ({
     animationsEnabled,
   } = customization;
 
+  // Automatically close the contextual popover as soon as the steal opportunity ends
+  useEffect(() => {
+    if (
+      !canStealFirstPiece ||
+      stealableCellIndex === null ||
+      stealableCellIndex === undefined
+    ) {
+      setIsStealPopoverOpen(false);
+    }
+  }, [canStealFirstPiece, stealableCellIndex]);
+
   const recentTrincaIds = new Set(
     lastMove?.trincasFormed.map((t) => t.id) ?? []
   );
@@ -53,6 +73,19 @@ export const BoardView: React.FC<BoardViewProps> = ({
   const handleCellPress = (cell: CellState) => {
     if (disabled) return;
 
+    // 1. Clicking on the first piece while P2 has the steal opportunity opens/toggles the contextual popover
+    if (canStealFirstPiece && cell.index === stealableCellIndex) {
+      soundEngine.playMenuClick();
+      setIsStealPopoverOpen((prev) => !prev);
+      return;
+    }
+
+    // 2. Clicking on any other cell closes the steal popover if it was open
+    if (isStealPopoverOpen) {
+      setIsStealPopoverOpen(false);
+    }
+
+    // 3. Validate normal move on empty cell
     const valid = isValidMove(board, cell.row, cell.col, currentPlayer);
     if (!valid) {
       setShakingCellIndex(cell.index);
@@ -93,7 +126,8 @@ export const BoardView: React.FC<BoardViewProps> = ({
   const getCellClasses = (
     cell: CellState,
     isLastPlaced: boolean,
-    isValid: boolean
+    isValid: boolean,
+    isStealable: boolean
   ): string => {
     const base =
       'relative aspect-square flex items-center justify-center transition-all duration-150 select-none overflow-hidden ';
@@ -128,18 +162,46 @@ export const BoardView: React.FC<BoardViewProps> = ({
 
     const interaction = disabled
       ? 'cursor-default'
-      : isValid
+      : isValid || isStealable
       ? 'cursor-pointer hover:-translate-y-[1px] active:translate-y-[1px]'
       : 'cursor-default';
 
     const shake =
       shakingCellIndex === cell.index ? 'animate-shake ring-2 ring-red-500' : '';
 
-    const lastMoveRing = isLastPlaced
+    const highlightRing = isStealable
+      ? 'ring-2 ring-offset-1 ring-sky-400'
+      : isLastPlaced
       ? 'ring-2 ring-offset-1 ring-amber-400'
       : '';
 
-    return `${base} ${radius} ${surface} ${interaction} ${shake} ${lastMoveRing}`;
+    return `${base} ${radius} ${surface} ${interaction} ${shake} ${highlightRing}`;
+  };
+
+  // Compute smart position for the contextual steal popover so it never clips on board edges
+  const getStealPopoverPositionStyle = (
+    index: number
+  ): React.CSSProperties => {
+    const { row, col } = toCoord(index);
+    const placeBelow = row <= 2;
+    const style: React.CSSProperties = {};
+
+    if (placeBelow) {
+      style.top = `calc(${((row + 1) / 9) * 100}% + 6px)`;
+    } else {
+      style.bottom = `calc(${((9 - row) / 9) * 100}% + 6px)`;
+    }
+
+    if (col <= 1) {
+      style.left = `${(col / 9) * 100}%`;
+    } else if (col >= 7) {
+      style.right = `${((8 - col) / 9) * 100}%`;
+    } else {
+      style.left = `${((col + 0.5) / 9) * 100}%`;
+      style.transform = 'translateX(-50%)';
+    }
+
+    return style;
   };
 
   return (
@@ -185,6 +247,10 @@ export const BoardView: React.FC<BoardViewProps> = ({
           {/* 9x9 Grid of Cells */}
           <div className="relative z-10 w-full h-full grid grid-cols-9 grid-rows-9 gap-1 sm:gap-1.5">
             {board.map((cell) => {
+              const isStealable =
+                !disabled &&
+                canStealFirstPiece &&
+                cell.index === stealableCellIndex;
               const isValid =
                 !disabled &&
                 isValidMove(board, cell.row, cell.col, currentPlayer);
@@ -207,9 +273,11 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 <button
                   key={cell.index}
                   type="button"
-                  aria-label={`Casa ${COL_LABELS[cell.col]}${
-                    ROW_LABELS[cell.row]
-                  }`}
+                  aria-label={
+                    isStealable
+                      ? `Casa ${COL_LABELS[cell.col]}${ROW_LABELS[cell.row]} — Primeira peça (clique para roubar)`
+                      : `Casa ${COL_LABELS[cell.col]}${ROW_LABELS[cell.row]}`
+                  }
                   onClick={() => handleCellPress(cell)}
                   onMouseEnter={() => setHoveredIndex(cell.index)}
                   onMouseLeave={() =>
@@ -217,19 +285,31 @@ export const BoardView: React.FC<BoardViewProps> = ({
                       prev === cell.index ? null : prev
                     )
                   }
-                  className={getCellClasses(cell, isLastPlaced, isValid)}
+                  className={getCellClasses(
+                    cell,
+                    isLastPlaced,
+                    isValid,
+                    isStealable
+                  )}
                   style={{
-                    backgroundColor: cell.inTrinca
+                    backgroundColor: isStealable
+                      ? `${blueColor}${isHovered || isStealPopoverOpen ? '30' : '1E'}`
+                      : cell.inTrinca
                       ? visualPlayer === 'red'
                         ? `${redColor}${darkMode ? '28' : '1C'}`
                         : `${blueColor}${darkMode ? '28' : '1C'}`
                       : undefined,
-                    borderColor: cell.inTrinca
+                    borderColor: isStealable
+                      ? blueColor
+                      : cell.inTrinca
                       ? visualPlayer === 'red'
                         ? `${redColor}88`
                         : `${blueColor}88`
                       : isHovered && isValid
                       ? accentColor
+                      : undefined,
+                    boxShadow: isStealable
+                      ? `0 0 12px ${blueColor}55`
                       : undefined,
                   }}
                 >
@@ -269,10 +349,21 @@ export const BoardView: React.FC<BoardViewProps> = ({
                     />
                   )}
 
+                  {/* Subtle interactive indicator on the 1st piece while steal opportunity is active */}
+                  {isStealable && (
+                    <span
+                      title="Clique para roubar esta peça"
+                      className="pointer-events-none absolute top-0.5 right-0.5 w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full flex items-center justify-center text-white shadow-sm animate-pulse"
+                      style={{ backgroundColor: blueColor }}
+                    >
+                      <Repeat className="w-2 h-2 sm:w-2.5 sm:h-2.5 stroke-[2.8]" />
+                    </span>
+                  )}
+
                   {/* Subtle badge when piece was stolen via Pie Rule */}
                   {cell.stolenByPieRule && (
                     <span
-                      title="Peça roubada pelo Azul (Roubo de Peça)"
+                      title="Peça roubada pelo P2"
                       className="pointer-events-none absolute top-0.5 left-0.5 w-2 h-2 rounded-full ring-1 ring-white/80"
                       style={{ backgroundColor: blueColor }}
                     />
@@ -280,6 +371,38 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 </button>
               );
             })}
+
+            {/* Contextual Popover for Stealing the 1st Piece */}
+            {isStealPopoverOpen &&
+              canStealFirstPiece &&
+              stealableCellIndex !== null &&
+              stealableCellIndex !== undefined && (
+                <div
+                  style={getStealPopoverPositionStyle(stealableCellIndex)}
+                  className={`absolute z-30 p-1.5 rounded-2xl border-2 shadow-xl animate-fade-in ${
+                    darkMode
+                      ? 'bg-[#1E2438] border-[#384468] shadow-[0_6px_0_#0E121E,0_12px_24px_rgba(0,0,0,0.6)]'
+                      : 'bg-white border-[#DFD5C4] shadow-[0_6px_0_#C9BDA8,0_12px_24px_rgba(40,30,15,0.18)]'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsStealPopoverOpen(false);
+                      onStealFirstPiece?.();
+                    }}
+                    className="px-3.5 py-2 rounded-xl font-black text-xs sm:text-sm text-white border-2 border-b-4 transition-all hover:brightness-105 active:translate-y-0.5 active:border-b-2 flex items-center gap-1.5 whitespace-nowrap shadow-sm"
+                    style={{
+                      backgroundColor: blueColor,
+                      borderColor: 'rgba(0,0,0,0.28)',
+                    }}
+                  >
+                    <Repeat className="w-3.5 h-3.5 shrink-0 stroke-[2.5]" />
+                    <span>Roubar esta peça</span>
+                  </button>
+                </div>
+              )}
           </div>
 
           {/* SVG Overlay for Formed Trinca Lines */}
