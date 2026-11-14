@@ -153,11 +153,11 @@ export const RulesModal: React.FC<RulesModalProps> = ({
                   <span>Roubar a primeira peça</span>
                 </div>
                 <p className="text-xs font-semibold opacity-80 leading-relaxed">
-                  Ao clicar na primeira peça colocada pelo <strong>P1</strong> e
-                  selecionar <strong>"Roubar esta peça"</strong>, ela permanece
-                  na mesma casa, muda de cor e de proprietário para o{' '}
-                  <strong>P2</strong>, e a vez passa imediatamente para o{' '}
-                  <strong>P1</strong>.
+                  Ao clicar diretamente na primeira peça colocada pelo{' '}
+                  <strong>P1</strong>, o <strong>P2</strong> rouba a peça
+                  imediatamente: ela permanece na mesma casa, muda de cor e de
+                  proprietário para o <strong>P2</strong>, e a vez passa na hora
+                  para o <strong>P1</strong>.
                 </p>
               </div>
 

@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Repeat } from 'lucide-react';
-import { soundEngine } from '../audio/soundEngine';
-import { COL_LABELS, ROW_LABELS, toCoord } from '../core/constants';
+import { COL_LABELS, ROW_LABELS } from '../core/constants';
 import { isValidMove } from '../core/gameEngine';
 import {
   CellState,
@@ -41,7 +40,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
 }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [shakingCellIndex, setShakingCellIndex] = useState<number | null>(null);
-  const [isStealPopoverOpen, setIsStealPopoverOpen] = useState<boolean>(false);
 
   const {
     darkMode,
@@ -55,17 +53,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
     animationsEnabled,
   } = customization;
 
-  // Automatically close the contextual popover as soon as the steal opportunity ends
-  useEffect(() => {
-    if (
-      !canStealFirstPiece ||
-      stealableCellIndex === null ||
-      stealableCellIndex === undefined
-    ) {
-      setIsStealPopoverOpen(false);
-    }
-  }, [canStealFirstPiece, stealableCellIndex]);
-
   const recentTrincaIds = new Set(
     lastMove?.trincasFormed.map((t) => t.id) ?? []
   );
@@ -73,19 +60,13 @@ export const BoardView: React.FC<BoardViewProps> = ({
   const handleCellPress = (cell: CellState) => {
     if (disabled) return;
 
-    // 1. Clicking on the first piece while P2 has the steal opportunity opens/toggles the contextual popover
+    // 1. Clicking directly on the first Red piece while P2 has the steal opportunity immediately steals it
     if (canStealFirstPiece && cell.index === stealableCellIndex) {
-      soundEngine.playMenuClick();
-      setIsStealPopoverOpen((prev) => !prev);
+      onStealFirstPiece?.();
       return;
     }
 
-    // 2. Clicking on any other cell closes the steal popover if it was open
-    if (isStealPopoverOpen) {
-      setIsStealPopoverOpen(false);
-    }
-
-    // 3. Validate normal move on empty cell
+    // 2. Validate normal move on empty cell
     const valid = isValidMove(board, cell.row, cell.col, currentPlayer);
     if (!valid) {
       setShakingCellIndex(cell.index);
@@ -178,32 +159,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
     return `${base} ${radius} ${surface} ${interaction} ${shake} ${highlightRing}`;
   };
 
-  // Compute smart position for the contextual steal popover so it never clips on board edges
-  const getStealPopoverPositionStyle = (
-    index: number
-  ): React.CSSProperties => {
-    const { row, col } = toCoord(index);
-    const placeBelow = row <= 2;
-    const style: React.CSSProperties = {};
-
-    if (placeBelow) {
-      style.top = `calc(${((row + 1) / 9) * 100}% + 6px)`;
-    } else {
-      style.bottom = `calc(${((9 - row) / 9) * 100}% + 6px)`;
-    }
-
-    if (col <= 1) {
-      style.left = `${(col / 9) * 100}%`;
-    } else if (col >= 7) {
-      style.right = `${((8 - col) / 9) * 100}%`;
-    } else {
-      style.left = `${((col + 0.5) / 9) * 100}%`;
-      style.transform = 'translateX(-50%)';
-    }
-
-    return style;
-  };
-
   return (
     <div className="w-full max-w-[560px] mx-auto flex flex-col items-center">
       {/* Column coordinate header */}
@@ -293,7 +248,7 @@ export const BoardView: React.FC<BoardViewProps> = ({
                   )}
                   style={{
                     backgroundColor: isStealable
-                      ? `${blueColor}${isHovered || isStealPopoverOpen ? '30' : '1E'}`
+                      ? `${blueColor}${isHovered ? '30' : '1E'}`
                       : cell.inTrinca
                       ? visualPlayer === 'red'
                         ? `${redColor}${darkMode ? '28' : '1C'}`
@@ -371,38 +326,6 @@ export const BoardView: React.FC<BoardViewProps> = ({
                 </button>
               );
             })}
-
-            {/* Contextual Popover for Stealing the 1st Piece */}
-            {isStealPopoverOpen &&
-              canStealFirstPiece &&
-              stealableCellIndex !== null &&
-              stealableCellIndex !== undefined && (
-                <div
-                  style={getStealPopoverPositionStyle(stealableCellIndex)}
-                  className={`absolute z-30 p-1.5 rounded-2xl border-2 shadow-xl animate-fade-in ${
-                    darkMode
-                      ? 'bg-[#1E2438] border-[#384468] shadow-[0_6px_0_#0E121E,0_12px_24px_rgba(0,0,0,0.6)]'
-                      : 'bg-white border-[#DFD5C4] shadow-[0_6px_0_#C9BDA8,0_12px_24px_rgba(40,30,15,0.18)]'
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsStealPopoverOpen(false);
-                      onStealFirstPiece?.();
-                    }}
-                    className="px-3.5 py-2 rounded-xl font-black text-xs sm:text-sm text-white border-2 border-b-4 transition-all hover:brightness-105 active:translate-y-0.5 active:border-b-2 flex items-center gap-1.5 whitespace-nowrap shadow-sm"
-                    style={{
-                      backgroundColor: blueColor,
-                      borderColor: 'rgba(0,0,0,0.28)',
-                    }}
-                  >
-                    <Repeat className="w-3.5 h-3.5 shrink-0 stroke-[2.5]" />
-                    <span>Roubar esta peça</span>
-                  </button>
-                </div>
-              )}
           </div>
 
           {/* SVG Overlay for Formed Trinca Lines */}
