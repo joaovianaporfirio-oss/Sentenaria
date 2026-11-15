@@ -493,11 +493,11 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   )}
                 </div>
                 <div className="font-black text-sm sm:text-base font-display">
-                  8 Pontos
+                  9 Pontos
                 </div>
                 <p className="text-xs font-semibold opacity-75 mt-1">
                   Disputa por pontuação: cada trinca válida vale 1 ponto. O
-                  primeiro jogador a alcançar 8 pontos vence a partida!
+                  primeiro jogador a alcançar 9 pontos vence a partida!
                 </p>
               </button>
 
@@ -618,7 +618,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   <span>Modalidade:</span>
                   <strong className="font-black">
                     {config.scoringMode === 'eight_points'
-                      ? '8 Pontos'
+                      ? '9 Pontos'
                       : 'Modo Livre'}
                   </strong>
                 </div>

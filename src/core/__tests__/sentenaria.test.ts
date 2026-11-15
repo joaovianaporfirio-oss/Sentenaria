@@ -208,7 +208,7 @@ describe('Sentenaria — Modalidades, Modo Adjacente Obrigatório, 81 Casas Livr
     ).toBe(true);
   });
 
-  it('7. encerra a partida imediatamente na modalidade 8 Pontos quando um jogador atinge 8 pontos', () => {
+  it('7. encerra a partida imediatamente na modalidade 9 Pontos quando um jogador atinge 9 pontos', () => {
     let state = createInitialGameState({
       scoringMode: 'eight_points',
     });
@@ -229,6 +229,7 @@ describe('Sentenaria — Modalidades, Modo Adjacente Obrigatório, 81 Casas Livr
       [4, 2], [5, 2],
       [4, 4], [5, 4],
       [4, 6], [5, 6],
+      [4, 8], [5, 8],
     ];
 
     let step = 0;
@@ -244,7 +245,7 @@ describe('Sentenaria — Modalidades, Modo Adjacente Obrigatório, 81 Casas Livr
       step++;
     }
 
-    expect(state.scores.blue).toBeGreaterThanOrEqual(8);
+    expect(state.scores.blue).toBeGreaterThanOrEqual(9);
     expect(state.status).toBe('finished');
     expect(state.winner).toBe('blue');
     expect(state.endReason).toBe('target_score_reached');

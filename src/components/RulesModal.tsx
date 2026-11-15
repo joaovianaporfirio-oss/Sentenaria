@@ -189,15 +189,15 @@ export const RulesModal: React.FC<RulesModalProps> = ({
             </p>
           </div>
 
-          {/* 5. Modalidade 8 Pontos */}
+          {/* 5. Modalidade 9 Pontos */}
           <div className={`p-4 rounded-2xl border-2 ${sectionCard}`}>
             <div className="flex items-center gap-2 font-black text-base font-display mb-2">
               <Crown className="w-5 h-5" style={{ color: accentColor }} />
-              <span>5. Modalidade: 8 Pontos</span>
+              <span>5. Modalidade: 9 Pontos</span>
             </div>
             <p className="text-xs sm:text-sm font-semibold opacity-80 leading-relaxed">
               Cada trinca válida corresponde a <strong>1 ponto</strong>. O
-              primeiro jogador a alcançar <strong>8 pontos</strong> vence a
+              primeiro jogador a alcançar <strong>9 pontos</strong> vence a
               partida imediatamente!
             </p>
           </div>

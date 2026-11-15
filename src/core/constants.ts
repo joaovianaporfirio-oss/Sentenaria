@@ -4,7 +4,7 @@ export const BOARD_SIZE = 9;
 export const TOTAL_CELLS = BOARD_SIZE * BOARD_SIZE; // 81
 export const CENTER_MIN = 3;
 export const CENTER_MAX = 5;
-export const TARGET_SCORE_EIGHT = 8;
+export const TARGET_SCORE_EIGHT = 9;
 
 export function toIndex(row: number, col: number): number {
   return row * BOARD_SIZE + col;

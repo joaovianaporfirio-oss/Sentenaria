@@ -600,7 +600,7 @@ export const OnlineLobbyModal: React.FC<OnlineLobbyModalProps> = ({
                     <span className="opacity-75">Modalidade:</span>
                     <strong className="font-black">
                       {config.scoringMode === 'eight_points'
-                        ? '8 Pontos'
+                        ? '9 Pontos'
                         : 'Modo Livre'}
                     </strong>
                   </div>

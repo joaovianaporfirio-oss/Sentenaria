@@ -573,7 +573,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               style={{ backgroundColor: accentColor }}
             >
               {config.scoringMode === 'eight_points'
-                ? '8 Pontos'
+                ? '9 Pontos'
                 : 'Modo Livre'}
             </span>
             {!isOnlineMode && (
@@ -775,7 +775,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   </div>
                   <div className="text-[10px] font-bold uppercase opacity-60">
                     {config.scoringMode === 'eight_points'
-                      ? '/ 8 pts'
+                      ? '/ 9 pts'
                       : 'pontos'}
                   </div>
                 </div>
@@ -883,7 +883,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                   </div>
                   <div className="text-[10px] font-bold uppercase opacity-60">
                     {config.scoringMode === 'eight_points'
-                      ? '/ 8 pts'
+                      ? '/ 9 pts'
                       : 'pontos'}
                   </div>
                 </div>
@@ -1161,7 +1161,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
             <p className="mt-1 text-xs sm:text-sm font-bold opacity-75">
               {endReason === 'target_score_reached'
-                ? 'Objetivo de 8 trincas alcançado com sucesso!'
+                ? 'Objetivo de 9 trincas alcançado com sucesso!'
                 : endReason === 'board_full'
                 ? 'Todas as 81 casas do tabuleiro foram preenchidas!'
                 : 'Partida encerrada: não restam mais jogadas válidas para o turno.'}
@@ -1224,7 +1224,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
               <span>
                 Modalidade:{' '}
                 {config.scoringMode === 'eight_points'
-                  ? '8 Pontos'
+                  ? '9 Pontos'
                   : 'Modo Livre'}
               </span>
             </div>
