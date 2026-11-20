@@ -1,6 +1,31 @@
 export const ROOM_CODE_LENGTH = 6;
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 export const MAX_CHAT_MESSAGE_LENGTH = 200;
+export const MAX_PLAYER_NAME_LENGTH = 20;
+
+// Strips ASCII/Unicode control characters and directional/zero-width spoofing characters
+const UNSAFE_CONTROL_AND_BIDI_REGEX =
+  /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+
+export function stripUnsafeTextChars(raw: string): string {
+  if (typeof raw !== 'string') return '';
+  return raw.replace(UNSAFE_CONTROL_AND_BIDI_REGEX, '');
+}
+
+/**
+ * Sanitizes a user-provided player nickname (strips control/bidi characters,
+ * collapses excessive whitespace, and enforces max length).
+ */
+export function sanitizePlayerName(
+  rawName: string,
+  fallback = 'Jogador'
+): string {
+  const cleaned = stripUnsafeTextChars(rawName)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_PLAYER_NAME_LENGTH);
+  return cleaned || fallback;
+}
 
 export interface RoomCodeValidationResult {
   valid: boolean;
@@ -98,24 +123,24 @@ export function validateChatMessage(rawText: string): {
   sanitized: string;
   error: string | null;
 } {
-  const trimmed = rawText.trim();
-  if (!trimmed) {
+  const cleaned = stripUnsafeTextChars(rawText).trim();
+  if (!cleaned) {
     return {
       valid: false,
       sanitized: '',
       error: 'A mensagem não pode estar vazia.',
     };
   }
-  if (trimmed.length > MAX_CHAT_MESSAGE_LENGTH) {
+  if (cleaned.length > MAX_CHAT_MESSAGE_LENGTH) {
     return {
       valid: false,
-      sanitized: trimmed.slice(0, MAX_CHAT_MESSAGE_LENGTH),
+      sanitized: cleaned.slice(0, MAX_CHAT_MESSAGE_LENGTH),
       error: `A mensagem excede o limite de ${MAX_CHAT_MESSAGE_LENGTH} caracteres.`,
     };
   }
   return {
     valid: true,
-    sanitized: trimmed,
+    sanitized: cleaned,
     error: null,
   };
 }

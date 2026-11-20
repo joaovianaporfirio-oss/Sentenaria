@@ -61,15 +61,14 @@ export const OnlineChatPanel: React.FC<OnlineChatPanelProps> = ({
       roomCode,
       playerIdRef.current,
       (list) => {
-        const ordered = sortChatMessagesChronologically(list);
-        if (ordered.length > prevCountRef.current && prevCountRef.current > 0) {
-          const newest = ordered[ordered.length - 1];
+        if (list.length > prevCountRef.current && prevCountRef.current > 0) {
+          const newest = list[list.length - 1];
           if (newest && newest.senderId !== playerIdRef.current) {
             soundEngine.playMenuClick();
           }
         }
-        prevCountRef.current = ordered.length;
-        setMessages(ordered);
+        prevCountRef.current = list.length;
+        setMessages(list);
       }
     );
 

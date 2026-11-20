@@ -81,9 +81,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   };
 
   return (
-    <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-5 sm:py-8 flex flex-col gap-6">
+    <main className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-5 sm:py-8 flex flex-col gap-6">
       {/* Top Bar: Brand Identity + Quick Theme/Sound Toggles */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           {/* Paper Cutout Logo Emblem */}
           <div
@@ -136,7 +136,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         </div>
 
         {/* Quick Actions Pill Bar */}
-        <div className="flex items-center gap-2">
+        <nav aria-label="Ações rápidas" className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => {
@@ -178,8 +178,8 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               <VolumeX className="w-4 h-4 opacity-50" />
             )}
           </button>
-        </div>
-      </div>
+        </nav>
+      </header>
 
       {/* Main Setup Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -761,6 +761,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 };

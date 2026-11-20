@@ -90,9 +90,33 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const [copiedRoomCode, setCopiedRoomCode] = useState(false);
 
   const aiTimerRef = useRef<number | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+  const copyTimerRef = useRef<number | null>(null);
   const prevTurnCountRef = useRef<number>(gameState.turnCount);
   const onlineSessionRef = useRef<ActiveOnlineSession | null>(onlineSession);
   const onUpdateGameStateRef = useRef(onUpdateGameState);
+
+  const showTimedToast = (msg: string, durationMs = 2400) => {
+    setInvalidToast(msg);
+    if (toastTimerRef.current !== null) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
+      setInvalidToast(null);
+      toastTimerRef.current = null;
+    }, durationMs);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) {
+        clearTimeout(toastTimerRef.current);
+      }
+      if (copyTimerRef.current !== null) {
+        clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     onlineSessionRef.current = onlineSession;
@@ -280,8 +304,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         }
 
         onUpdateGameState(nextState);
-      } catch (err) {
-        console.error('AI move error:', err);
+      } catch {
+        // Fallback silently if AI turn is interrupted
       } finally {
         setIsAIThinking(false);
       }
@@ -314,10 +338,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     if (isOnlineMode && onlineSession) {
       if (onlineSession.myColor !== 'blue') {
         soundEngine.playInvalidMove();
-        setInvalidToast(
-          'Apenas o jogador Azul pode decidir sobre o Roubo de Peça!'
+        showTimedToast(
+          'Apenas o jogador Azul pode decidir sobre o Roubo de Peça!',
+          2400
         );
-        setTimeout(() => setInvalidToast(null), 2400);
         return;
       }
 
@@ -348,10 +372,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         onUpdateGameState(nextState);
       } catch (err: any) {
         soundEngine.playInvalidMove();
-        setInvalidToast(
-          err?.message || 'Não foi possível registrar a decisão.'
+        showTimedToast(
+          err?.message || 'Não foi possível registrar a decisão.',
+          2600
         );
-        setTimeout(() => setInvalidToast(null), 2600);
       } finally {
         setIsSubmittingMove(false);
       }
@@ -380,8 +404,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     if (isOnlineMode && onlineSession) {
       if (!isMyOnlineTurn) {
         soundEngine.playInvalidMove();
-        setInvalidToast('Aguarde a vez do seu adversário jogar!');
-        setTimeout(() => setInvalidToast(null), 2200);
+        showTimedToast('Aguarde a vez do seu adversário jogar!', 2200);
         return;
       }
 
@@ -414,8 +437,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         onUpdateGameState(nextState);
       } catch (err: any) {
         soundEngine.playInvalidMove();
-        setInvalidToast(err?.message || 'Não foi possível registrar a jogada.');
-        setTimeout(() => setInvalidToast(null), 2600);
+        showTimedToast(
+          err?.message || 'Não foi possível registrar a jogada.',
+          2600
+        );
       } finally {
         setIsSubmittingMove(false);
       }
@@ -442,18 +467,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   const handleInvalidCellClick = () => {
     soundEngine.playInvalidMove();
     if (isOnlineMode && !isMyOnlineTurn) {
-      setInvalidToast('Aguarde o turno do seu adversário online!');
-      setTimeout(() => setInvalidToast(null), 2400);
+      showTimedToast('Aguarde o turno do seu adversário online!', 2400);
     }
   };
 
   const handleRestartOrRematch = async () => {
     soundEngine.playMenuClick();
     if (isOnlineMode && onlineSession) {
-      await restartOnlineMatch(
-        onlineSession.roomData.code,
-        onlineSession.playerId
-      );
+      try {
+        await restartOnlineMatch(
+          onlineSession.roomData.code,
+          onlineSession.playerId
+        );
+      } catch {
+        // Ignore transient network error
+      }
     } else {
       onRestartMatch();
     }
@@ -477,7 +505,13 @@ export const GameScreen: React.FC<GameScreenProps> = ({
       await navigator.clipboard.writeText(onlineRoom.code);
       setCopiedRoomCode(true);
       soundEngine.playMenuClick();
-      setTimeout(() => setCopiedRoomCode(false), 2000);
+      if (copyTimerRef.current !== null) {
+        clearTimeout(copyTimerRef.current);
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        setCopiedRoomCode(false);
+        copyTimerRef.current = null;
+      }, 2000);
     } catch {
       // Ignore
     }
@@ -528,7 +562,7 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     : 'bg-white border-[#E2D9C8] text-slate-800 shadow-[0_6px_0_#D5CBB8]';
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-3 sm:px-6 py-3 sm:py-5 flex flex-col gap-4">
+    <main className="w-full max-w-6xl mx-auto px-3 sm:px-6 py-3 sm:py-5 flex flex-col gap-4">
       {/* Top Navigation & Mode Bar */}
       <header
         className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 rounded-2xl border-2 ${cardSurface}`}
@@ -1271,6 +1305,6 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           </div>
         </div>
       )}
-    </div>
+    </main>
   );
 };

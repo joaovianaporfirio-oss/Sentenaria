@@ -32,6 +32,8 @@ import {
 import { auth, db, ensurePlayerIdentity } from './firebaseConfig';
 import {
   generateRoomCode,
+  sanitizePlayerName,
+  stripUnsafeTextChars,
   validateAndNormalizeRoomCode,
   validateChatMessage,
 } from './roomCodeUtils';
@@ -392,7 +394,10 @@ function deserializeRoomData(raw: Record<string, any>): OnlineRoomData {
     players: {
       host: {
         id: String(hostRaw?.id ?? raw.hostId ?? ''),
-        name: String(hostRaw?.name ?? 'Host (Vermelho)'),
+        name: sanitizePlayerName(
+          String(hostRaw?.name ?? ''),
+          'Host (Vermelho)'
+        ),
         color: 'red',
         role: 'host',
         connected: Boolean(hostRaw?.connected ?? true),
@@ -403,7 +408,10 @@ function deserializeRoomData(raw: Record<string, any>): OnlineRoomData {
         guestRaw && guestRaw !== 'none' && guestRaw.id
           ? {
               id: String(guestRaw.id),
-              name: String(guestRaw.name ?? 'Convidado (Azul)'),
+              name: sanitizePlayerName(
+                String(guestRaw.name ?? ''),
+                'Convidado (Azul)'
+              ),
               color: 'blue',
               role: 'guest',
               connected: Boolean(guestRaw.connected ?? true),
@@ -474,14 +482,14 @@ export async function createOnlineRoom(
   config: Partial<GameConfig>
 ): Promise<{ roomData: OnlineRoomData; role: OnlineRole; myColor: Player }> {
   if (!auth.currentUser) {
-    await signInAnonymously(auth);
+    await signInAnonymously(auth).catch(() => {});
   }
   const identity = await ensurePlayerIdentity();
   const effectiveHostId =
     hostId && hostId.trim() !== ''
       ? hostId.trim()
       : auth.currentUser?.uid || identity.uid;
-  const cleanName = hostName.trim() || 'Host (Vermelho)';
+  const cleanName = sanitizePlayerName(hostName, 'Host (Vermelho)');
   const initialGameState = createInitialGameState({
     ...config,
     opponentMode: 'online',
@@ -562,7 +570,7 @@ export async function joinOnlineRoom(
   }
 
   if (!auth.currentUser) {
-    await signInAnonymously(auth);
+    await signInAnonymously(auth).catch(() => {});
   }
   const identity = await ensurePlayerIdentity();
   const resolvedPlayerId =
@@ -571,7 +579,7 @@ export async function joinOnlineRoom(
       : auth.currentUser?.uid || identity.uid;
 
   const code = validation.normalizedCode;
-  const cleanName = playerName.trim() || 'Convidado (Azul)';
+  const cleanName = sanitizePlayerName(playerName, 'Convidado (Azul)');
   const roomRef = ref(db, `rooms/${code}`);
 
   // Pre-check if room exists
@@ -728,6 +736,9 @@ export async function submitOnlineMove(
   row: number,
   col: number
 ): Promise<GameState> {
+  if (!auth.currentUser) {
+    await signInAnonymously(auth).catch(() => {});
+  }
   await ensurePlayerIdentity();
   const code = roomCode.toUpperCase();
   const roomRef = ref(db, `rooms/${code}`);
@@ -808,7 +819,7 @@ export async function submitOnlinePieRuleDecision(
   decision: PieRuleDecision
 ): Promise<GameState> {
   if (!auth.currentUser) {
-    await signInAnonymously(auth);
+    await signInAnonymously(auth).catch(() => {});
   }
   await ensurePlayerIdentity();
   const code = roomCode.toUpperCase();
@@ -862,6 +873,9 @@ export async function restartOnlineMatch(
   roomCode: string,
   playerId: string
 ): Promise<void> {
+  if (!auth.currentUser) {
+    await signInAnonymously(auth).catch(() => {});
+  }
   await ensurePlayerIdentity();
   const code = roomCode.toUpperCase();
   const roomRef = ref(db, `rooms/${code}`);
@@ -998,6 +1012,9 @@ export async function sendOnlineChatMessage(
   senderRole: OnlineRole,
   rawText: string
 ): Promise<void> {
+  if (!auth.currentUser) {
+    await signInAnonymously(auth).catch(() => {});
+  }
   await ensurePlayerIdentity();
   const validation = validateChatMessage(rawText);
   if (!validation.valid) {
@@ -1025,9 +1042,12 @@ export async function sendOnlineChatMessage(
   const newMsgRef = push(messagesListRef);
 
   const payload = {
+    id: newMsgRef.key || String(Date.now()),
     senderId,
-    senderName:
-      senderName.trim() || (actualRole === 'host' ? 'Host' : 'Convidado'),
+    senderName: sanitizePlayerName(
+      senderName,
+      actualRole === 'host' ? 'Host' : 'Convidado'
+    ),
     senderRole: actualRole,
     senderColor,
     text: validation.sanitized,
@@ -1039,8 +1059,8 @@ export async function sendOnlineChatMessage(
 
 /**
  * Subscribes to the private chat messages of a room in real time (`rooms/{roomId}/messages`).
- * Converts the Firebase snapshot object into an array and sorts strictly by `timestamp` in
- * ascending order (oldest to newest) with unique Firebase push keys.
+ * Listens directly to the `messages` child node so board moves and presence heartbeats do not
+ * trigger redundant full-room snapshot downloads or unnecessary chat re-renders.
  */
 export function subscribeToRoomChat(
   roomCode: string,
@@ -1048,63 +1068,95 @@ export function subscribeToRoomChat(
   onMessagesChange: (messages: OnlineChatMessage[]) => void
 ): () => void {
   const code = roomCode.toUpperCase();
-  const roomRef = ref(db, `rooms/${code}`);
+  const messagesRef = ref(db, `rooms/${code}/messages`);
+  let active = true;
+  let unsubMessages: (() => void) | null = null;
 
-  const unsub = onValue(roomRef, (snap) => {
-    if (!snap.exists()) {
-      onMessagesChange([]);
-      return;
-    }
-    const roomVal = snap.val();
-    if (
-      playerId &&
-      roomVal.hostId &&
-      roomVal.guestId &&
-      roomVal.hostId !== playerId &&
-      roomVal.guestId !== playerId
-    ) {
-      // Prevent third parties from reading room messages
-      onMessagesChange([]);
-      return;
-    }
+  // Verify room membership once before attaching the messages listener
+  get(ref(db, `rooms/${code}`))
+    .then((roomSnap) => {
+      if (!active) return;
+      if (!roomSnap.exists()) {
+        onMessagesChange([]);
+        return;
+      }
+      const roomVal = roomSnap.val();
+      if (
+        playerId &&
+        roomVal.hostId &&
+        roomVal.guestId &&
+        roomVal.hostId !== playerId &&
+        roomVal.guestId !== playerId
+      ) {
+        onMessagesChange([]);
+        return;
+      }
 
-    const rawMessages = roomVal.messages;
-    if (!rawMessages || typeof rawMessages !== 'object') {
-      onMessagesChange([]);
-      return;
-    }
+      unsubMessages = onValue(
+        messagesRef,
+        (snap) => {
+          if (!active) return;
+          if (!snap.exists()) {
+            onMessagesChange([]);
+            return;
+          }
+          const rawMessages = snap.val();
+          if (!rawMessages || typeof rawMessages !== 'object') {
+            onMessagesChange([]);
+            return;
+          }
 
-    const list: OnlineChatMessage[] = Object.entries(rawMessages)
-      .filter((entry): entry is [string, Record<string, any>] =>
-        Boolean(entry[1] && typeof entry[1] === 'object')
-      )
-      .map(([key, m]) => {
-        const numericTimestamp =
-          typeof m.timestamp === 'number'
-            ? m.timestamp
-            : typeof m.clientTimestamp === 'number'
-            ? m.clientTimestamp
-            : Number(m.timestamp) || 0;
+          const list: OnlineChatMessage[] = Object.entries(rawMessages)
+            .filter((entry): entry is [string, Record<string, any>] =>
+              Boolean(entry[1] && typeof entry[1] === 'object')
+            )
+            .map(([key, m]) => {
+              const numericTimestamp =
+                typeof m.timestamp === 'number'
+                  ? m.timestamp
+                  : typeof m.clientTimestamp === 'number'
+                  ? m.clientTimestamp
+                  : Number(m.timestamp) || 0;
 
-        return {
-          id: key,
-          senderId: String(m.senderId || ''),
-          senderName: String(m.senderName || 'Jogador'),
-          senderRole: (m.senderRole === 'host' ? 'host' : 'guest') as OnlineRole,
-          senderColor: (m.senderColor === 'red' ? 'red' : 'blue') as Player,
-          text: String(m.text || ''),
-          timestamp: numericTimestamp,
-        };
-      })
-      .sort((a, b) => {
-        if (a.timestamp !== b.timestamp) {
-          return a.timestamp - b.timestamp;
+              return {
+                id: key,
+                senderId: String(m.senderId || ''),
+                senderName: sanitizePlayerName(
+                  String(m.senderName || ''),
+                  'Jogador'
+                ),
+                senderRole: (m.senderRole === 'host'
+                  ? 'host'
+                  : 'guest') as OnlineRole,
+                senderColor: (m.senderColor === 'red'
+                  ? 'red'
+                  : 'blue') as Player,
+                text: stripUnsafeTextChars(String(m.text || '')).slice(0, 200),
+                timestamp: numericTimestamp,
+              };
+            })
+            .sort((a, b) => {
+              if (a.timestamp !== b.timestamp) {
+                return a.timestamp - b.timestamp;
+              }
+              return a.id.localeCompare(b.id);
+            });
+
+          onMessagesChange(list);
+        },
+        () => {
+          if (active) onMessagesChange([]);
         }
-        return a.id.localeCompare(b.id);
-      });
+      );
+    })
+    .catch(() => {
+      if (active) onMessagesChange([]);
+    });
 
-    onMessagesChange(list);
-  });
-
-  return () => unsub();
+  return () => {
+    active = false;
+    if (unsubMessages) {
+      unsubMessages();
+    }
+  };
 }

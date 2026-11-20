@@ -6,6 +6,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
+import { sanitizePlayerName } from './roomCodeUtils';
 
 export const firebaseConfig = {
   apiKey: 'AIzaSyAH1fPPnC3ydXZjelKHhzvpd25m8bTAha4',
@@ -160,7 +161,8 @@ export function getCurrentPlayerUidSync(): string {
 export function getSavedPlayerNickname(): string {
   if (typeof window === 'undefined') return '';
   try {
-    return localStorage.getItem(SESSION_PLAYER_NAME_KEY) || '';
+    const raw = localStorage.getItem(SESSION_PLAYER_NAME_KEY);
+    return raw ? sanitizePlayerName(raw, '') : '';
   } catch {
     return '';
   }
@@ -169,7 +171,10 @@ export function getSavedPlayerNickname(): string {
 export function savePlayerNickname(name: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(SESSION_PLAYER_NAME_KEY, name.trim().slice(0, 20));
+    localStorage.setItem(
+      SESSION_PLAYER_NAME_KEY,
+      sanitizePlayerName(name, '')
+    );
   } catch {
     // Ignore storage errors
   }

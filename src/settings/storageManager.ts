@@ -37,6 +37,14 @@ export const DEFAULT_STATS: PlayerStats = {
   totalTrincasFormed: 0,
 };
 
+const HEX_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/;
+
+function safeHexColor(candidate: unknown, fallback: string): string {
+  return typeof candidate === 'string' && HEX_COLOR_REGEX.test(candidate)
+    ? candidate
+    : fallback;
+}
+
 export function loadCustomizationSettings(): CustomizationSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.CUSTOMIZATION);
@@ -45,6 +53,33 @@ export function loadCustomizationSettings(): CustomizationSettings {
     return {
       ...DEFAULT_CUSTOMIZATION,
       ...parsed,
+      redColor: safeHexColor(parsed?.redColor, DEFAULT_CUSTOMIZATION.redColor),
+      blueColor: safeHexColor(
+        parsed?.blueColor,
+        DEFAULT_CUSTOMIZATION.blueColor
+      ),
+      accentColor: safeHexColor(
+        parsed?.accentColor,
+        DEFAULT_CUSTOMIZATION.accentColor
+      ),
+      bgColorLight: safeHexColor(
+        parsed?.bgColorLight,
+        DEFAULT_CUSTOMIZATION.bgColorLight
+      ),
+      bgColorDark: safeHexColor(
+        parsed?.bgColorDark,
+        DEFAULT_CUSTOMIZATION.bgColorDark
+      ),
+      darkMode: Boolean(parsed?.darkMode ?? DEFAULT_CUSTOMIZATION.darkMode),
+      showCoordinates: Boolean(
+        parsed?.showCoordinates ?? DEFAULT_CUSTOMIZATION.showCoordinates
+      ),
+      showMoveHints: Boolean(
+        parsed?.showMoveHints ?? DEFAULT_CUSTOMIZATION.showMoveHints
+      ),
+      animationsEnabled: Boolean(
+        parsed?.animationsEnabled ?? DEFAULT_CUSTOMIZATION.animationsEnabled
+      ),
     };
   } catch {
     return { ...DEFAULT_CUSTOMIZATION };

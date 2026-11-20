@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { COL_LABELS, ROW_LABELS } from '../core/constants';
 import { isValidMove } from '../core/gameEngine';
 import {
@@ -39,6 +39,15 @@ export const BoardView: React.FC<BoardViewProps> = ({
 }) => {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [shakingCellIndex, setShakingCellIndex] = useState<number | null>(null);
+  const shakeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (shakeTimerRef.current !== null) {
+        clearTimeout(shakeTimerRef.current);
+      }
+    };
+  }, []);
 
   const {
     darkMode,
@@ -69,8 +78,12 @@ export const BoardView: React.FC<BoardViewProps> = ({
     const valid = isValidMove(board, cell.row, cell.col, currentPlayer);
     if (!valid) {
       setShakingCellIndex(cell.index);
-      setTimeout(() => {
+      if (shakeTimerRef.current !== null) {
+        clearTimeout(shakeTimerRef.current);
+      }
+      shakeTimerRef.current = window.setTimeout(() => {
         setShakingCellIndex((prev) => (prev === cell.index ? null : prev));
+        shakeTimerRef.current = null;
       }, 420);
       onInvalidCellClick?.(cell.row, cell.col);
       return;

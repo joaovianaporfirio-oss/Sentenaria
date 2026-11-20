@@ -1,11 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { soundEngine } from './audio/soundEngine';
-import { CustomizerModal } from './components/CustomizerModal';
 import { ActiveOnlineSession, GameScreen } from './components/GameScreen';
 import { MainMenu } from './components/MainMenu';
-import { OnlineLobbyModal } from './components/OnlineLobbyModal';
-import { RulesModal } from './components/RulesModal';
-import { SettingsModal } from './components/SettingsModal';
 import { createInitialGameState } from './core/gameEngine';
 import {
   AudioSettings,
@@ -27,6 +30,27 @@ import {
   savePlayerStats,
 } from './settings/storageManager';
 
+const CustomizerModal = lazy(() =>
+  import('./components/CustomizerModal').then((m) => ({
+    default: m.CustomizerModal,
+  }))
+);
+const OnlineLobbyModal = lazy(() =>
+  import('./components/OnlineLobbyModal').then((m) => ({
+    default: m.OnlineLobbyModal,
+  }))
+);
+const RulesModal = lazy(() =>
+  import('./components/RulesModal').then((m) => ({
+    default: m.RulesModal,
+  }))
+);
+const SettingsModal = lazy(() =>
+  import('./components/SettingsModal').then((m) => ({
+    default: m.SettingsModal,
+  }))
+);
+
 type ActiveScreen = 'menu' | 'game';
 type ActiveModal = 'none' | 'customizer' | 'settings' | 'rules' | 'online_lobby';
 
@@ -35,7 +59,6 @@ export const App: React.FC = () => {
   const [modal, setModal] = useState<ActiveModal>('none');
   const [onlineSession, setOnlineSession] =
     useState<ActiveOnlineSession | null>(null);
-  const [authenticatedUid, setAuthenticatedUid] = useState<string>('');
 
   const [config, setConfig] = useState<GameConfig>(() => loadGameConfig());
   const [customization, setCustomization] = useState<CustomizationSettings>(
@@ -49,18 +72,11 @@ export const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(() =>
     createInitialGameState(loadGameConfig())
   );
+  const prevGameStateRef = useRef<GameState>(gameState);
 
   // Authenticate anonymously with Firebase Auth as soon as the app opens
   useEffect(() => {
-    let active = true;
-    ensurePlayerIdentity().then((res) => {
-      if (active) {
-        setAuthenticatedUid(res.uid);
-      }
-    });
-    return () => {
-      active = false;
-    };
+    ensurePlayerIdentity().catch(() => {});
   }, []);
 
   // Sync dark mode class on root html element & persist customization
@@ -96,12 +112,14 @@ export const App: React.FC = () => {
     }
     setOnlineSession(null);
     const freshState = createInitialGameState(config);
+    prevGameStateRef.current = freshState;
     setGameState(freshState);
     setScreen('game');
   };
 
   const handleEnterOnlineMatch = (session: ActiveOnlineSession) => {
     setOnlineSession(session);
+    prevGameStateRef.current = session.roomData.gameState;
     setGameState(session.roomData.gameState);
     setModal('none');
     setScreen('game');
@@ -109,52 +127,54 @@ export const App: React.FC = () => {
 
   const handleRestartMatch = () => {
     const freshState = createInitialGameState(gameState.config);
+    prevGameStateRef.current = freshState;
     setGameState(freshState);
   };
 
   const handleUpdateGameState = useCallback((nextState: GameState) => {
-    setGameState((prevGameState) => {
-      const turnAdvanced = nextState.turnCount > prevGameState.turnCount;
-      const newTrincas = turnAdvanced
-        ? (nextState.lastMove?.pointsEarned ?? 0)
-        : 0;
-      const justFinished =
-        prevGameState.status === 'playing' && nextState.status === 'finished';
+    const prevGameState = prevGameStateRef.current;
+    prevGameStateRef.current = nextState;
 
-      if (newTrincas > 0 || justFinished) {
-        setStats((prev) => {
-          const updated: PlayerStats = {
-            ...prev,
-            totalTrincasFormed: prev.totalTrincasFormed + newTrincas,
-            matchesPlayed: justFinished
-              ? prev.matchesPlayed + 1
-              : prev.matchesPlayed,
-            redWins:
-              justFinished && nextState.winner === 'red'
-                ? prev.redWins + 1
-                : prev.redWins,
-            blueWins:
-              justFinished && nextState.winner === 'blue'
-                ? prev.blueWins + 1
-                : prev.blueWins,
-            draws:
-              justFinished && nextState.winner === 'draw'
-                ? prev.draws + 1
-                : prev.draws,
-            aiWins:
-              justFinished &&
-              nextState.config.opponentMode === 'ai' &&
-              nextState.winner === nextState.config.aiPlayer
-                ? prev.aiWins + 1
-                : prev.aiWins,
-          };
-          savePlayerStats(updated);
-          return updated;
-        });
-      }
+    const turnAdvanced = nextState.turnCount > prevGameState.turnCount;
+    const newTrincas = turnAdvanced
+      ? (nextState.lastMove?.pointsEarned ?? 0)
+      : 0;
+    const justFinished =
+      prevGameState.status === 'playing' && nextState.status === 'finished';
 
-      return nextState;
-    });
+    setGameState(nextState);
+
+    if (newTrincas > 0 || justFinished) {
+      setStats((prev) => {
+        const updated: PlayerStats = {
+          ...prev,
+          totalTrincasFormed: prev.totalTrincasFormed + newTrincas,
+          matchesPlayed: justFinished
+            ? prev.matchesPlayed + 1
+            : prev.matchesPlayed,
+          redWins:
+            justFinished && nextState.winner === 'red'
+              ? prev.redWins + 1
+              : prev.redWins,
+          blueWins:
+            justFinished && nextState.winner === 'blue'
+              ? prev.blueWins + 1
+              : prev.blueWins,
+          draws:
+            justFinished && nextState.winner === 'draw'
+              ? prev.draws + 1
+              : prev.draws,
+          aiWins:
+            justFinished &&
+            nextState.config.opponentMode === 'ai' &&
+            nextState.winner === nextState.config.aiPlayer
+              ? prev.aiWins + 1
+              : prev.aiWins,
+        };
+        savePlayerStats(updated);
+        return updated;
+      });
+    }
   }, []);
 
   const handleToggleDarkMode = () => {
@@ -225,41 +245,43 @@ export const App: React.FC = () => {
         />
       )}
 
-      {modal === 'online_lobby' && (
-        <OnlineLobbyModal
-          config={config}
-          customization={customization}
-          onEnterOnlineMatch={handleEnterOnlineMatch}
-          onClose={() => setModal('none')}
-        />
-      )}
+      <Suspense fallback={null}>
+        {modal === 'online_lobby' && (
+          <OnlineLobbyModal
+            config={config}
+            customization={customization}
+            onEnterOnlineMatch={handleEnterOnlineMatch}
+            onClose={() => setModal('none')}
+          />
+        )}
 
-      {modal === 'customizer' && (
-        <CustomizerModal
-          customization={customization}
-          onUpdateCustomization={setCustomization}
-          onClose={() => setModal('none')}
-        />
-      )}
+        {modal === 'customizer' && (
+          <CustomizerModal
+            customization={customization}
+            onUpdateCustomization={setCustomization}
+            onClose={() => setModal('none')}
+          />
+        )}
 
-      {modal === 'settings' && (
-        <SettingsModal
-          customization={customization}
-          audioSettings={audioSettings}
-          stats={stats}
-          onUpdateCustomization={setCustomization}
-          onUpdateAudio={setAudioSettings}
-          onResetStats={handleResetStats}
-          onClose={() => setModal('none')}
-        />
-      )}
+        {modal === 'settings' && (
+          <SettingsModal
+            customization={customization}
+            audioSettings={audioSettings}
+            stats={stats}
+            onUpdateCustomization={setCustomization}
+            onUpdateAudio={setAudioSettings}
+            onResetStats={handleResetStats}
+            onClose={() => setModal('none')}
+          />
+        )}
 
-      {modal === 'rules' && (
-        <RulesModal
-          customization={customization}
-          onClose={() => setModal('none')}
-        />
-      )}
+        {modal === 'rules' && (
+          <RulesModal
+            customization={customization}
+            onClose={() => setModal('none')}
+          />
+        )}
+      </Suspense>
     </div>
   );
 };
