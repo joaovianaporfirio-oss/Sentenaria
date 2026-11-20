@@ -3,17 +3,112 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sentenaria — Estratégia em Tabuleiro 9x9</title>
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' https://*.firebaseio.com https://*.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com; worker-src 'self' blob:; base-uri 'self'; form-action 'self';"
+    />
+
+    <title>Sentenaria — Jogo de Estratégia em Tabuleiro 9x9 Online e Local</title>
+    <meta
+      name="description"
+      content="Jogue Sentenaria gratuitamente no navegador: jogo de estratégia tática de trincas em tabuleiro 9x9 (81 casas) com Modo Adjacente, Roubo de Peça, Inteligência Artificial e Multiplayer Online em tempo real."
+    />
+    <meta
+      name="keywords"
+      content="Sentenaria, jogo de tabuleiro 9x9, jogo de estratégia online, trincas 9x9, jogo multiplayer 2 jogadores, pie rule, modo adjacente, jogo de lógica gratuito"
+    />
+    <meta name="author" content="Sentenaria" />
+    <meta
+      name="robots"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    />
+    <meta name="theme-color" content="#0EA5E9" />
+    <link rel="canonical" href="https://sentenaria.com.br/" />
+
+    <!-- Open Graph / Facebook / WhatsApp -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Sentenaria" />
+    <meta property="og:locale" content="pt_BR" />
+    <meta
+      property="og:title"
+      content="Sentenaria — Estratégia Tática de Trincas em Tabuleiro 9x9"
+    />
+    <meta
+      property="og:description"
+      content="Desafie a Inteligência Artificial ou jogue com amigos no Multiplayer Online em tempo real neste jogo estratégico de trincas em 81 casas."
+    />
+    <meta property="og:url" content="https://sentenaria.com.br/" />
+    <meta
+      property="og:image"
+      content="https://sentenaria.com.br/apple-touch-icon.png"
+    />
+
+    <!-- Twitter Cards -->
+    <meta name="twitter:card" content="summary" />
+    <meta
+      name="twitter:title"
+      content="Sentenaria — Estratégia Tática de Trincas em Tabuleiro 9x9"
+    />
+    <meta
+      name="twitter:description"
+      content="Jogo de tabuleiro estratégico 9x9 com Modo Adjacente, Roubo de Peça, IA em 3 níveis e salas privadas Multiplayer Online."
+    />
+    <meta
+      name="twitter:image"
+      content="https://sentenaria.com.br/apple-touch-icon.png"
+    />
+
+    <!-- Favicons -->
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=JetBrains+Mono:wght@500;700&family=Nunito:wght@500;600;700;800;900&display=swap" rel="stylesheet">
-    <script type="module" crossorigin src="/assets/index-CYXjmUp5.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Zgnqno3-.css">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=JetBrains+Mono:wght@500;700&family=Nunito:wght@500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Schema.org Structured Data (VideoGame & WebApplication) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": ["VideoGame", "WebApplication"],
+        "name": "Sentenaria",
+        "alternateName": "Sentenaria 9x9",
+        "url": "https://sentenaria.com.br/",
+        "image": "https://sentenaria.com.br/apple-touch-icon.png",
+        "description": "Jogo de estratégia tática de trincas em tabuleiro 9x9 (81 casas) com Modo Adjacente, Roubo de Peça, 2 Jogadores Local, Inteligência Artificial e Multiplayer Online.",
+        "inLanguage": "pt-BR",
+        "applicationCategory": "GameApplication",
+        "genre": ["Strategy", "Board Game", "Abstract Strategy"],
+        "playMode": ["SinglePlayer", "MultiPlayer", "CoOp"],
+        "numberOfPlayers": {
+          "@type": "QuantitativeValue",
+          "minValue": 1,
+          "maxValue": 2
+        },
+        "operatingSystem": "All",
+        "browserRequirements": "Requires JavaScript and HTML5 support",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "BRL",
+          "availability": "https://schema.org/InStock"
+        }
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/index-Iv3tRI60.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vendor-ui-DnZAYdss.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-react-qZ6hSeag.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-firebase-BIjAf_CU.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-BQ1UvCA9.css">
   </head>
   <body class="antialiased selection:bg-sky-500/20">
     <div id="root"></div>
