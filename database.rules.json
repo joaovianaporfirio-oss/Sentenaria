@@ -2,6 +2,93 @@
   "rules": {
     ".read": false,
     ".write": false,
+    "users": {
+      ".read": false,
+      ".write": false,
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid",
+        "uid": {
+          ".validate": "newData.isString() && newData.val() === $uid"
+        },
+        "accountId": {
+          ".validate": "newData.isString() && newData.val().matches(/^#[A-Z0-9-]{4,12}$/) && (!data.exists() || data.val() === newData.val())"
+        },
+        "username": {
+          ".validate": "newData.isString() && newData.val().length >= 3 && newData.val().length <= 20 && (!data.exists() || auth.token.email_verified === true)"
+        },
+        "bio": {
+          ".validate": "newData.isString() && newData.val().length <= 140 && (!data.exists() || auth.token.email_verified === true)"
+        },
+        "avatar": {
+          ".validate": "newData.isString() && newData.val().length <= 130000 && (!data.exists() || auth.token.email_verified === true)"
+        },
+        "equippedBadge": {
+          ".validate": "newData.isString() && newData.val().length <= 32 && (!data.exists() || auth.token.email_verified === true)"
+        },
+        "points": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() === 0) || (data.exists() && newData.val() === data.val()) || (data.exists() && auth.token.email_verified === true && newData.val() === data.val() + 10 && newData.parent().child('lastRewardedRoom').isString() && root.child('rooms/' + newData.parent().child('lastRewardedRoom').val() + '/isRanked').val() === true && root.child('rooms/' + newData.parent().child('lastRewardedRoom').val() + '/pointsAwarded').val() === true && root.child('rooms/' + newData.parent().child('lastRewardedRoom').val() + '/winnerUid').val() === $uid))"
+        },
+        "rankedWins": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && ((!data.exists() && newData.val() === 0) || newData.val() === data.val() || newData.val() === data.val() + 1)"
+        },
+        "termsAcceptedAt": {
+          ".validate": "newData.val() === null || newData.isNumber()"
+        }
+      }
+    },
+    "usernames": {
+      ".read": "auth != null",
+      "$usernameLower": {
+        ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid)",
+        ".validate": "!newData.exists() || (newData.hasChildren(['uid']) && newData.child('uid').val() === auth.uid && $usernameLower.length >= 3 && $usernameLower.length <= 24)"
+      }
+    },
+    "accountIds": {
+      ".read": "auth != null",
+      "$accountKey": {
+        ".write": "auth != null && !data.exists()",
+        ".validate": "newData.hasChildren(['uid']) && newData.child('uid').val() === auth.uid && $accountKey.matches(/^[A-Z0-9]{4,12}$/)"
+      }
+    },
+    "leaderboard": {
+      ".read": true,
+      ".indexOn": ["points"],
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid && auth.token.email_verified === true",
+        ".validate": "newData.hasChildren(['uid', 'accountId', 'username', 'points', 'equippedBadge']) && newData.child('uid').val() === $uid && newData.child('username').isString() && newData.child('username').val().length >= 3 && newData.child('username').val().length <= 20 && newData.child('points').isNumber() && newData.child('points').val() === root.child('users/' + $uid + '/points').val() && (!newData.child('avatar').exists() || (newData.child('avatar').isString() && newData.child('avatar').val().length <= 130000))"
+      }
+    },
+    "friends": {
+      ".read": false,
+      ".write": false,
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$friendUid": {
+          ".write": "auth != null && auth.token.email_verified === true && (auth.uid === $uid || auth.uid === $friendUid)",
+          ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'since']) && newData.child('uid').val() === $friendUid && newData.child('since').isNumber())"
+        }
+      }
+    },
+    "friendRequests": {
+      ".read": false,
+      ".write": false,
+      "$targetUid": {
+        ".read": "auth != null && auth.uid === $targetUid",
+        "$fromUid": {
+          ".write": "auth != null && auth.token.email_verified === true && (auth.uid === $fromUid || auth.uid === $targetUid) && $targetUid !== $fromUid",
+          ".validate": "!newData.exists() || (newData.hasChildren(['fromUid', 'fromUsername', 'fromAccountId', 'fromPoints', 'fromBadge', 'createdAt']) && newData.child('fromUid').val() === $fromUid && newData.child('fromUsername').isString() && newData.child('fromUsername').val().length <= 20 && newData.child('createdAt').isNumber())"
+        }
+      }
+    },
+    "matchmakingQueue": {
+      ".read": "auth != null && auth.token.email_verified === true",
+      ".indexOn": ["joinedAt", "status"],
+      "$uid": {
+        ".write": "auth != null && auth.token.email_verified === true && (auth.uid === $uid || (data.exists() && data.child('status').val() === 'waiting' && newData.child('status').val() === 'matched' && newData.child('opponentUid').val() === auth.uid))",
+        ".validate": "!newData.exists() || (newData.hasChildren(['uid', 'username', 'accountId', 'points', 'equippedBadge', 'joinedAt', 'status']) && newData.child('uid').val() === $uid && newData.child('username').isString() && newData.child('username').val().length <= 20 && (newData.child('status').val() === 'waiting' || newData.child('status').val() === 'matched'))"
+      }
+    },
     "rooms": {
       ".read": false,
       ".write": false,
@@ -14,6 +101,12 @@
         },
         "status": {
           ".validate": "newData.isString() && (newData.val() === 'waiting' || newData.val() === 'playing' || newData.val() === 'finished' || newData.val() === 'abandoned')"
+        },
+        "isRanked": {
+          ".validate": "newData.isBoolean() && (!data.exists() || data.val() === newData.val())"
+        },
+        "pointsAwarded": {
+          ".validate": "newData.isBoolean() && (!data.exists() || data.val() !== true || newData.val() === true)"
         },
         "currentTurn": {
           ".validate": "newData.isString() && (newData.val() === 'red' || newData.val() === 'blue')"

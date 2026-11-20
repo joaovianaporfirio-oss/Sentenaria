@@ -8,16 +8,13 @@ import {
   Flame,
   Globe,
   Infinity as InfinityIcon,
-  Moon,
   Palette,
   Play,
   Settings,
   ShieldAlert,
   Sparkles,
-  Sun,
+  Swords,
   Users,
-  Volume2,
-  VolumeX,
 } from 'lucide-react';
 import { soundEngine } from '../audio/soundEngine';
 import {
@@ -30,6 +27,8 @@ import {
 } from '../core/types';
 import { PlayerStats } from '../settings/storageManager';
 import { PlayerSymbol } from './PlayerSymbol';
+import { TopPlayerHud } from './TopPlayerHud';
+import { WorldRankSection } from './WorldRankSection';
 
 interface MainMenuProps {
   config: GameConfig;
@@ -38,6 +37,9 @@ interface MainMenuProps {
   stats: PlayerStats;
   onUpdateConfig: (partial: Partial<GameConfig>) => void;
   onStartGame: () => void;
+  onStartRankedOnline: () => void;
+  onOpenAuth: () => void;
+  onOpenProfile: (initialTab?: 'profile' | 'badges' | 'friends') => void;
   onOpenCustomizer: () => void;
   onOpenSettings: () => void;
   onOpenRules: () => void;
@@ -52,6 +54,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   stats,
   onUpdateConfig,
   onStartGame,
+  onStartRankedOnline,
+  onOpenAuth,
+  onOpenProfile,
   onOpenCustomizer,
   onOpenSettings,
   onOpenRules,
@@ -81,8 +86,18 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   };
 
   return (
-    <main className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-5 sm:py-8 flex flex-col gap-6">
-      {/* Top Bar: Brand Identity + Quick Theme/Sound Toggles */}
+    <main className="w-full max-w-5xl mx-auto px-4 sm:px-6 py-4 sm:py-6 flex flex-col gap-5">
+      {/* Floating Brawl-Stars-inspired Top Player HUD (Paper Mario / Duolingo / Wii Shop aesthetic) */}
+      <TopPlayerHud
+        customization={customization}
+        audioSettings={audioSettings}
+        onOpenAuth={onOpenAuth}
+        onOpenProfile={onOpenProfile}
+        onToggleDarkMode={onToggleDarkMode}
+        onToggleSound={onToggleSound}
+      />
+
+      {/* Brand Identity Header */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           {/* Paper Cutout Logo Emblem */}
@@ -134,51 +149,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             </p>
           </div>
         </div>
-
-        {/* Quick Actions Pill Bar */}
-        <nav aria-label="Ações rápidas" className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              soundEngine.playMenuClick();
-              onToggleDarkMode();
-            }}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-2xl font-extrabold text-xs sm:text-sm border-2 border-b-4 transition-all active:translate-y-0.5 active:border-b-2 ${
-              darkMode
-                ? 'bg-[#262D47] border-[#384266] text-amber-300 hover:bg-[#2E3656]'
-                : 'bg-white border-[#D8CEBE] text-slate-700 hover:bg-slate-50'
-            }`}
-          >
-            {darkMode ? (
-              <>
-                <Sun className="w-4 h-4" />
-                <span>Tema Claro</span>
-              </>
-            ) : (
-              <>
-                <Moon className="w-4 h-4" />
-                <span>Tema Escuro</span>
-              </>
-            )}
-          </button>
-
-          <button
-            type="button"
-            onClick={onToggleSound}
-            aria-label={audioSettings.soundEnabled ? 'Desativar Som' : 'Ativar Som'}
-            className={`p-2.5 rounded-2xl border-2 border-b-4 transition-all active:translate-y-0.5 active:border-b-2 ${
-              darkMode
-                ? 'bg-[#262D47] border-[#384266] text-slate-200 hover:bg-[#2E3656]'
-                : 'bg-white border-[#D8CEBE] text-slate-700 hover:bg-slate-50'
-            }`}
-          >
-            {audioSettings.soundEnabled ? (
-              <Volume2 className="w-4 h-4" />
-            ) : (
-              <VolumeX className="w-4 h-4 opacity-50" />
-            )}
-          </button>
-        </nav>
       </header>
 
       {/* Main Setup Grid */}
@@ -640,7 +610,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               {config.opponentMode === 'online' ? (
                 <>
                   <Globe className="w-5 h-5" />
-                  <span>Abrir Lobby Online</span>
+                  <span>Abrir Lobby Privado</span>
                 </>
               ) : (
                 <>
@@ -648,6 +618,22 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   <span>Iniciar Partida</span>
                 </>
               )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playMenuClick();
+                onStartRankedOnline();
+              }}
+              className="mt-2.5 w-full py-3.5 px-5 rounded-2xl font-black text-sm sm:text-base uppercase tracking-wide text-white border-2 border-b-[5px] transition-all hover:brightness-105 active:translate-y-1 active:border-b-2 flex items-center justify-center gap-2 shadow-md"
+              style={{
+                backgroundColor: '#F59E0B',
+                borderColor: 'rgba(0,0,0,0.28)',
+              }}
+            >
+              <Swords className="w-5 h-5" />
+              <span>Jogar Ranqueado Online</span>
             </button>
           </div>
 
@@ -761,6 +747,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Scroll-Down World Rank Section (Bottom-to-Top Climb toward #1 Mundial) */}
+      <WorldRankSection
+        customization={customization}
+        onOpenAuth={onOpenAuth}
+      />
     </main>
   );
 };

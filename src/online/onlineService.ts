@@ -50,6 +50,10 @@ export interface OnlinePlayerParticipant {
   connected: boolean;
   lastSeen: number;
   leftRoom: boolean;
+  avatar?: string;
+  points?: number;
+  equippedBadge?: string;
+  accountId?: string;
 }
 
 export interface OnlineChatMessage {
@@ -65,6 +69,9 @@ export interface OnlineChatMessage {
 export interface OnlineRoomData {
   code: string;
   status: OnlineRoomStatus;
+  isRanked?: boolean;
+  pointsAwarded?: boolean;
+  winnerUid?: string;
   createdAt: number;
   updatedAt: number;
   hostId: string;
@@ -361,7 +368,7 @@ export function deserializeGameStateFromFirebase(
   };
 }
 
-function deserializeRoomData(raw: Record<string, any>): OnlineRoomData {
+export function deserializeRoomData(raw: Record<string, any>): OnlineRoomData {
   const hostRaw = raw.players?.host;
   const guestRaw = raw.players?.guest;
   const gameState = deserializeGameStateFromFirebase(raw.gameState);
@@ -387,6 +394,9 @@ function deserializeRoomData(raw: Record<string, any>): OnlineRoomData {
   return {
     code: String(raw.code ?? ''),
     status: normalizedStatus,
+    isRanked: Boolean(raw.isRanked ?? false),
+    pointsAwarded: Boolean(raw.pointsAwarded ?? false),
+    winnerUid: raw.winnerUid ? String(raw.winnerUid) : undefined,
     createdAt: Number(raw.createdAt ?? Date.now()),
     updatedAt: Number(raw.updatedAt ?? Date.now()),
     hostId: String(raw.hostId ?? ''),
@@ -403,6 +413,16 @@ function deserializeRoomData(raw: Record<string, any>): OnlineRoomData {
         connected: Boolean(hostRaw?.connected ?? true),
         lastSeen: Number(hostRaw?.lastSeen ?? Date.now()),
         leftRoom: Boolean(hostRaw?.leftRoom ?? false),
+        avatar: typeof hostRaw?.avatar === 'string' ? hostRaw.avatar : undefined,
+        points: typeof hostRaw?.points === 'number' ? hostRaw.points : undefined,
+        equippedBadge:
+          typeof hostRaw?.equippedBadge === 'string'
+            ? hostRaw.equippedBadge
+            : undefined,
+        accountId:
+          typeof hostRaw?.accountId === 'string'
+            ? hostRaw.accountId
+            : undefined,
       },
       guest:
         guestRaw && guestRaw !== 'none' && guestRaw.id
@@ -417,6 +437,22 @@ function deserializeRoomData(raw: Record<string, any>): OnlineRoomData {
               connected: Boolean(guestRaw.connected ?? true),
               lastSeen: Number(guestRaw.lastSeen ?? Date.now()),
               leftRoom: Boolean(guestRaw.leftRoom ?? false),
+              avatar:
+                typeof guestRaw.avatar === 'string'
+                  ? guestRaw.avatar
+                  : undefined,
+              points:
+                typeof guestRaw.points === 'number'
+                  ? guestRaw.points
+                  : undefined,
+              equippedBadge:
+                typeof guestRaw.equippedBadge === 'string'
+                  ? guestRaw.equippedBadge
+                  : undefined,
+              accountId:
+                typeof guestRaw.accountId === 'string'
+                  ? guestRaw.accountId
+                  : undefined,
             }
           : null,
     },
@@ -900,8 +936,63 @@ export async function restartOnlineMatch(
     gameState: serializeGameStateForFirebase(freshState),
     currentTurn: 'red',
     status: nextStatus,
+    pointsAwarded: false,
+    winnerUid: '',
     updatedAt: Date.now(),
   });
+}
+
+/**
+ * Declares victory by Walkover (W.O.) when the opponent leaves or stays disconnected
+ * during an active Ranked Online match.
+ */
+export async function claimDisconnectWalkoverVictory(
+  roomCode: string,
+  claimingPlayerId: string
+): Promise<GameState | null> {
+  if (!auth.currentUser) return null;
+  const code = roomCode.toUpperCase();
+  const roomRef = ref(db, `rooms/${code}`);
+  const snap = await get(roomRef);
+  if (!snap.exists()) return null;
+
+  const current = snap.val();
+  if (current.status === 'finished' || current.gameState?.status === 'finished') {
+    return null;
+  }
+
+  let winnerColor: Player | null = null;
+  let opponent: Record<string, any> | null = null;
+  if (current.hostId === claimingPlayerId) {
+    winnerColor = 'red';
+    opponent = current.players?.guest;
+  } else if (current.guestId === claimingPlayerId) {
+    winnerColor = 'blue';
+    opponent = current.players?.host;
+  } else {
+    return null;
+  }
+
+  if (!opponent || (opponent.connected && !opponent.leftRoom)) {
+    return null;
+  }
+
+  const state = deserializeGameStateFromFirebase(current.gameState);
+  const finishedState: GameState = {
+    ...state,
+    status: 'finished',
+    winner: winnerColor,
+    endReason: 'no_valid_moves_for_player',
+  };
+
+  await update(roomRef, {
+    gameState: serializeGameStateForFirebase(finishedState),
+    status: 'finished',
+    winnerUid: claimingPlayerId,
+    updatedAt: Date.now(),
+  });
+
+  return finishedState;
 }
 
 /**

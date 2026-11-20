@@ -6,9 +6,14 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { AuthProvider, useAuth } from './account/AuthContext';
 import { soundEngine } from './audio/soundEngine';
 import { ActiveOnlineSession, GameScreen } from './components/GameScreen';
 import { MainMenu } from './components/MainMenu';
+import {
+  hasAcceptedLocalTerms,
+  NewTermsModal,
+} from './components/NewTermsModal';
 import { createInitialGameState } from './core/gameEngine';
 import {
   AudioSettings,
@@ -50,13 +55,45 @@ const SettingsModal = lazy(() =>
     default: m.SettingsModal,
   }))
 );
+const AuthModal = lazy(() =>
+  import('./components/AuthModal').then((m) => ({
+    default: m.AuthModal,
+  }))
+);
+const ProfileModal = lazy(() =>
+  import('./components/ProfileModal').then((m) => ({
+    default: m.ProfileModal,
+  }))
+);
+const MatchmakingModal = lazy(() =>
+  import('./components/MatchmakingModal').then((m) => ({
+    default: m.MatchmakingModal,
+  }))
+);
 
 type ActiveScreen = 'menu' | 'game';
-type ActiveModal = 'none' | 'customizer' | 'settings' | 'rules' | 'online_lobby';
+type ActiveModal =
+  | 'none'
+  | 'customizer'
+  | 'settings'
+  | 'rules'
+  | 'online_lobby'
+  | 'auth'
+  | 'profile'
+  | 'matchmaking';
 
-export const App: React.FC = () => {
+const SentenariaAppContent: React.FC = () => {
+  const { isLoggedIn, isEmailVerified, needsTermsAcceptance, profile } =
+    useAuth();
+
   const [screen, setScreen] = useState<ActiveScreen>('menu');
   const [modal, setModal] = useState<ActiveModal>('none');
+  const [profileInitialTab, setProfileInitialTab] = useState<
+    'profile' | 'badges' | 'friends'
+  >('profile');
+  const [localTermsAccepted, setLocalTermsAccepted] = useState<boolean>(() =>
+    hasAcceptedLocalTerms()
+  );
   const [onlineSession, setOnlineSession] =
     useState<ActiveOnlineSession | null>(null);
 
@@ -74,7 +111,7 @@ export const App: React.FC = () => {
   );
   const prevGameStateRef = useRef<GameState>(gameState);
 
-  // Authenticate anonymously with Firebase Auth as soon as the app opens
+  // Warm Firebase anonymous identity for private-room guests if no account is logged in
   useEffect(() => {
     ensurePlayerIdentity().catch(() => {});
   }, []);
@@ -115,6 +152,21 @@ export const App: React.FC = () => {
     prevGameStateRef.current = freshState;
     setGameState(freshState);
     setScreen('game');
+  };
+
+  const handleStartRankedOnline = () => {
+    if (!isLoggedIn || !isEmailVerified) {
+      setModal('auth');
+      return;
+    }
+    setModal('matchmaking');
+  };
+
+  const handleOpenProfile = (
+    initialTab: 'profile' | 'badges' | 'friends' = 'profile'
+  ) => {
+    setProfileInitialTab(initialTab);
+    setModal('profile');
   };
 
   const handleEnterOnlineMatch = (session: ActiveOnlineSession) => {
@@ -204,6 +256,8 @@ export const App: React.FC = () => {
     ? customization.bgColorDark
     : customization.bgColorLight;
 
+  const shouldShowNewTerms = !localTermsAccepted || needsTermsAcceptance;
+
   return (
     <div
       className={`min-h-screen w-full transition-colors duration-300 font-sans ${
@@ -221,6 +275,9 @@ export const App: React.FC = () => {
           stats={stats}
           onUpdateConfig={handleUpdateConfig}
           onStartGame={handleStartGame}
+          onStartRankedOnline={handleStartRankedOnline}
+          onOpenAuth={() => setModal('auth')}
+          onOpenProfile={handleOpenProfile}
           onOpenCustomizer={() => setModal('customizer')}
           onOpenSettings={() => setModal('settings')}
           onOpenRules={() => setModal('rules')}
@@ -245,7 +302,39 @@ export const App: React.FC = () => {
         />
       )}
 
+      {shouldShowNewTerms && (
+        <NewTermsModal
+          uid={profile?.uid ?? null}
+          customization={customization}
+          onAccepted={() => setLocalTermsAccepted(true)}
+        />
+      )}
+
       <Suspense fallback={null}>
+        {modal === 'auth' && (
+          <AuthModal
+            customization={customization}
+            onClose={() => setModal('none')}
+          />
+        )}
+
+        {modal === 'profile' && (
+          <ProfileModal
+            initialTab={profileInitialTab}
+            customization={customization}
+            onOpenAuth={() => setModal('auth')}
+            onClose={() => setModal('none')}
+          />
+        )}
+
+        {modal === 'matchmaking' && (
+          <MatchmakingModal
+            customization={customization}
+            onMatchReady={handleEnterOnlineMatch}
+            onClose={() => setModal('none')}
+          />
+        )}
+
         {modal === 'online_lobby' && (
           <OnlineLobbyModal
             config={config}
@@ -285,5 +374,11 @@ export const App: React.FC = () => {
     </div>
   );
 };
+
+export const App: React.FC = () => (
+  <AuthProvider>
+    <SentenariaAppContent />
+  </AuthProvider>
+);
 
 export default App;

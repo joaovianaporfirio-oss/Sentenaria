@@ -12,6 +12,7 @@ import {
   Repeat,
   RotateCcw,
   Sparkles,
+  Swords,
   Trophy,
   Users,
   Volume2,
@@ -20,6 +21,7 @@ import {
   WifiOff,
   Zap,
 } from 'lucide-react';
+import { claimRankedMatchVictoryPoints } from '../account/accountService';
 import { chooseAIMove, chooseAIPieRuleDecision } from '../ai/aiEngine';
 import { soundEngine } from '../audio/soundEngine';
 import {
@@ -35,6 +37,7 @@ import {
   Player,
 } from '../core/types';
 import {
+  claimDisconnectWalkoverVictory,
   leaveOnlineRoom,
   OnlineRole,
   OnlineRoomData,
@@ -88,6 +91,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     onlineSession?.roomData ?? null
   );
   const [copiedRoomCode, setCopiedRoomCode] = useState(false);
+  const [rankedPointsEarned, setRankedPointsEarned] = useState<{
+    delta: number;
+    targetTotal: number;
+    displayedTotal: number;
+  } | null>(null);
+  const [claimingWalkover, setClaimingWalkover] = useState(false);
 
   const aiTimerRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -231,8 +240,67 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   useEffect(() => {
     if (status === 'playing') {
       setInspectingBoard(false);
+      setRankedPointsEarned(null);
     }
   }, [status, turnCount]);
+
+  // Idempotent Ranked Online Victory Points (+10 pts) with animated count-up
+  const isRankedMatch = Boolean(
+    onlineRoom?.isRanked ?? onlineSession?.roomData.isRanked
+  );
+  useEffect(() => {
+    if (
+      status !== 'finished' ||
+      !isOnlineMode ||
+      !isRankedMatch ||
+      !onlineSession ||
+      winner !== onlineSession.myColor
+    ) {
+      return;
+    }
+
+    let active = true;
+    let stepTimer: number | null = null;
+
+    claimRankedMatchVictoryPoints({
+      roomCode: onlineSession.roomData.code,
+      winnerUid: onlineSession.playerId,
+    })
+      .then((res) => {
+        if (!active || !res.awarded) return;
+        const startTotal = Math.max(0, res.newPoints - res.delta);
+        setRankedPointsEarned({
+          delta: res.delta,
+          targetTotal: res.newPoints,
+          displayedTotal: startTotal,
+        });
+
+        let current = startTotal;
+        stepTimer = window.setInterval(() => {
+          current += 1;
+          if (current >= res.newPoints) {
+            if (stepTimer !== null) clearInterval(stepTimer);
+            setRankedPointsEarned({
+              delta: res.delta,
+              targetTotal: res.newPoints,
+              displayedTotal: res.newPoints,
+            });
+          } else {
+            setRankedPointsEarned({
+              delta: res.delta,
+              targetTotal: res.newPoints,
+              displayedTotal: current,
+            });
+          }
+        }, 70);
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+      if (stepTimer !== null) clearInterval(stepTimer);
+    };
+  }, [status, winner, isOnlineMode, isRankedMatch, onlineSession?.roomData.code]);
 
   // Trigger Victory / End of Match effects
   useEffect(() => {
@@ -602,6 +670,12 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           )}
 
           <div className="flex items-center gap-1.5 flex-wrap">
+            {isRankedMatch && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wide text-white bg-amber-500 shadow-sm">
+                <Swords className="w-3.5 h-3.5" />
+                Ranqueado
+              </span>
+            )}
             <span
               className="px-2.5 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide text-white shadow-sm"
               style={{ backgroundColor: accentColor }}
@@ -719,9 +793,34 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 : `Adversário (${opponentParticipant?.name}) perdeu a conexão temporariamente. O progresso da partida está salvo — aguardando reconexão...`}
             </span>
           </div>
-          <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg bg-black/10 dark:bg-white/10 shrink-0">
-            Código: {onlineRoom?.code}
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            {isRankedMatch && status === 'playing' && onlineSession && (
+              <button
+                type="button"
+                disabled={claimingWalkover}
+                onClick={async () => {
+                  setClaimingWalkover(true);
+                  try {
+                    const next = await claimDisconnectWalkoverVictory(
+                      onlineSession.roomData.code,
+                      onlineSession.playerId
+                    );
+                    if (next) {
+                      onUpdateGameState(next);
+                    }
+                  } finally {
+                    setClaimingWalkover(false);
+                  }
+                }}
+                className="px-3 py-1.5 rounded-xl font-black text-xs text-white bg-amber-500 border-2 border-b-4 border-amber-700 hover:brightness-105 active:translate-y-0.5 disabled:opacity-50"
+              >
+                {claimingWalkover ? 'Validando...' : 'Declarar Vitória por W.O.'}
+              </button>
+            )}
+            <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg bg-black/10 dark:bg-white/10">
+              Código: {onlineRoom?.code}
+            </span>
+          </div>
         </div>
       )}
 
@@ -1198,8 +1297,21 @@ export const GameScreen: React.FC<GameScreenProps> = ({
                 ? 'Objetivo de 9 trincas alcançado com sucesso!'
                 : endReason === 'board_full'
                 ? 'Todas as 81 casas do tabuleiro foram preenchidas!'
-                : 'Partida encerrada: não restam mais jogadas válidas para o turno.'}
+                : 'Partida encerrada por W.O. ou ausência de jogadas válidas.'}
             </p>
+
+            {/* Animated Ranked Victory +10 Points Banner */}
+            {rankedPointsEarned && (
+              <div className="mt-3 p-3 rounded-2xl bg-amber-500/15 border-2 border-amber-500/50 animate-float-points">
+                <div className="text-xs font-black uppercase tracking-wider text-amber-500">
+                  Vitória Ranqueada • +{rankedPointsEarned.delta} Pontos!
+                </div>
+                <div className="mt-1 flex items-center justify-center gap-2 text-2xl font-black font-display text-amber-500">
+                  <Trophy className="w-6 h-6" />
+                  <span>{rankedPointsEarned.displayedTotal} pts</span>
+                </div>
+              </div>
+            )}
 
             {/* Score Comparison Box */}
             <div className="my-5 grid grid-cols-2 gap-3">
